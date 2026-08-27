@@ -1,0 +1,35 @@
+{
+  "name": "contextdebt",
+  "version": "0.1.2",
+  "description": "Find the expired code your AI reads \u2014 and you pay for \u2014 every day. Scans your repo for self-admitted workarounds and checks whether the reasons they cite are already dead.",
+  "bin": {
+    "contextdebt": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "keywords": [
+    "context-debt",
+    "technical-debt",
+    "dead-code",
+    "workaround",
+    "ai",
+    "llm",
+    "codebase",
+    "cleanup"
+  ],
+  "homepage": "https://contextdebt.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ContextDebt/contextdebt.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ContextDebt/contextdebt/issues"
+  },
+  "author": "ContextDebt <hello@contextdebt.dev>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
