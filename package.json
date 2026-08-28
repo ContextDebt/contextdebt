@@ -1,6 +1,6 @@
 {
   "name": "contextdebt",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Find the expired code your AI reads \u2014 and you pay for \u2014 every day. Scans your repo for self-admitted workarounds and checks whether the reasons they cite are already dead.",
   "bin": {
     "contextdebt": "bin/cli.js"

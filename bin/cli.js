@@ -15,8 +15,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.2";
-const EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]);
+const VERSION = "0.1.3";
+const EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".liquid"]);
 const EXCLUDE_DIR = /^(node_modules|dist|build|out|vendor|coverage|\.git|\.next|\.turbo|\.cache|__tests__|__mocks__|test|tests|spec|e2e|fixtures|examples?|docs?|\.storybook)$/;
 const EXCLUDE_FILE = /\.(test|spec|stories|d)\.(js|jsx|ts|tsx|mjs|cjs)$|\.min\.js$/;
 
@@ -24,13 +24,22 @@ const MARKER = new RegExp(
   [
     "workaround", "hacky", "\\bHACK\\b", "hotfix", "band-?aid", "kludge",
     "temporar(?:y|ily)\\s+(?:fix|hack|solution|workaround|patch)",
-    "until\\s+(?:we|this|it|they)\\b.{0,60}?(?:upgrade|fix|release|support|land|migrate)",
-    "remove\\s+(?:this|once|when|after)\\b",
-    "(?:can|should)\\s+be\\s+removed\\s+(?:when|once|after)"
+    "until\\s+(?:we|this|it|they)\\b.{0,60}?(?:upgrade|fix|release|support|land|migrate)"
   ].join("|"),
   "i"
 );
+// removal intents ("remove this when...", "will be deleted after...") appear in UI strings
+// too — only trust them inside comments.
+const MARKER_REMOVAL = new RegExp(
+  [
+    "(?:remove|delete)\\s+(?:this|once|when|after)\\b",
+    "(?:can|should|will)\\s+be\\s+(?:removed|deleted)\\s+(?:when|once|after|in|by)"
+  ].join("|"),
+  "i"
+);
+const COMMENTISH = /(^|\s)(\/\/|\/\*|\*|#)|<!--|\{%-?\s*comment/;
 const ISSUE_URL = /github\.com\/([\w.-]+)\/([\w.-]+)\/(issues|pull)\/(\d+)/g;
+const TRAC_URL = /(?:core|meta)\.trac\.wordpress\.org\/ticket\/(\d+)/g;
 
 // ---------- tiny ansi ----------
 const tty = process.stdout.isTTY;
@@ -71,16 +80,20 @@ function scan(root) {
       loc += lines.length; files += 1;
       progress();
       for (let i = 0; i < lines.length; i++) {
-        if (!MARKER.test(lines[i])) continue;
-        if (/(cannot|can\x27t|don\x27t|do not|won\x27t|shouldn\x27t|must not|never)\s+(be\s+)?remove/i.test(lines[i])) continue;
+        if (lines[i].length > 500) continue; // minified/bundled line — not a human comment
+        const isMarker = MARKER.test(lines[i]) ||
+          (MARKER_REMOVAL.test(lines[i]) && COMMENTISH.test(lines[i]));
+        if (!isMarker) continue;
+        if (/(cannot|can\x27t|don\x27t|do not|won\x27t|shouldn\x27t|must not|never)\s+(be\s+)?(remove|delete)/i.test(lines[i])) continue;
         const ctx = lines.slice(Math.max(0, i - 2), i + 2).join("\n");
         const issues = [...ctx.matchAll(ISSUE_URL)].map((m) => ({
           url: m[0], owner: m[1], repo: m[2], num: m[4]
         }));
+        const trac = [...ctx.matchAll(TRAC_URL)].map((m) => m[0]);
         const dm = lines[i].match(/(20\d{2}-\d{2}-\d{2})/);
         findings.push({
           file: path.relative(root, p), line: i + 1,
-          text: lines[i].trim().slice(0, 160), issues,
+          text: lines[i].trim().slice(0, 160), issues, trac,
           dated: dm ? dm[1] : null
         });
       }
@@ -124,7 +137,7 @@ function fetchIssue(owner, repo, num) {
 
   Usage: npx contextdebt [path] [--json] [--all]
 
-  Scans JS/TS source for self-admitted workarounds ("workaround",
+  Scans JS/TS/PHP source for self-admitted workarounds ("workaround",
   "until we upgrade", "TODO: remove when ...") and checks whether
   GitHub issues they reference are already closed.
 
@@ -150,7 +163,7 @@ function fetchIssue(owner, repo, num) {
   const { loc, files, findings } = scan(root);
 
   if (files === 0) {
-    console.log("  No JS/TS source files found here. Run inside a repository.");
+    console.log("  No JS/TS/PHP source files found here. Run inside a repository.");
     console.log(dim("  https://contextdebt.dev"));
     return;
   }
@@ -179,10 +192,12 @@ function fetchIssue(owner, repo, num) {
   const density = loc ? (findings.length / loc * 10000) : 0;
 
   if (json) {
+    const tracRefs = [...new Set(findings.flatMap((f) => f.trac || []))];
     console.log(JSON.stringify({ version: VERSION, root, files, loc, markers: findings.length,
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
       expired_reasons: expired.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
+      trac_tickets_referenced: tracRefs.length,
       findings, issues: resolved }, null, 2));
     return;
   }
@@ -239,6 +254,15 @@ function fetchIssue(owner, repo, num) {
   }
   if (datedUpcoming.length > 0) {
     console.log(dim(`  ${datedUpcoming.length} dated TODO(s) not due yet — watcher material.`));
+  }
+  const tracSet = new Set(findings.flatMap((f) => f.trac || []));
+  if (tracSet.size > 0) {
+    console.log(dim(`  ${tracSet.size} WordPress trac ticket(s) referenced — status check coming in the WP edition.`));
+  }
+  if (findings.length === 0) {
+    console.log("  0 self-admitted workarounds. Either you're clean — or your debt is the");
+    console.log("  silent kind: the workarounds nobody wrote a comment for.");
+    console.log("");
   }
   console.log(dim("  These are the candidates your AI reads on every task."));
   console.log(dim("  Deep scan with evidence chains — coming soon: ") + bold("https://contextdebt.dev"));
