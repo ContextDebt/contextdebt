@@ -15,9 +15,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.3";
-const EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".liquid"]);
-const EXCLUDE_DIR = /^(node_modules|dist|build|out|vendor|coverage|\.git|\.next|\.turbo|\.cache|__tests__|__mocks__|test|tests|spec|e2e|fixtures|examples?|docs?|\.storybook)$/;
+const VERSION = "0.1.4";
+const EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".liquid", ".py", ".pyi"]);
+const EXCLUDE_DIR = /^(node_modules|dist|build|out|vendor|coverage|\.git|\.next|\.turbo|\.cache|__tests__|__mocks__|test|tests|spec|e2e|fixtures|examples?|docs?|\.storybook|t|\.venv|venv|site-packages|__pycache__|\.tox|\.mypy_cache|\.ruff_cache)$/;
 const EXCLUDE_FILE = /\.(test|spec|stories|d)\.(js|jsx|ts|tsx|mjs|cjs)$|\.min\.js$/;
 
 const MARKER = new RegExp(
@@ -137,7 +137,7 @@ function fetchIssue(owner, repo, num) {
 
   Usage: npx contextdebt [path] [--json] [--all]
 
-  Scans JS/TS/PHP source for self-admitted workarounds ("workaround",
+  Scans JS/TS/PHP/Python source for self-admitted workarounds ("workaround",
   "until we upgrade", "TODO: remove when ...") and checks whether
   GitHub issues they reference are already closed.
 
@@ -163,7 +163,7 @@ function fetchIssue(owner, repo, num) {
   const { loc, files, findings } = scan(root);
 
   if (files === 0) {
-    console.log("  No JS/TS/PHP source files found here. Run inside a repository.");
+    console.log("  No JS/TS/PHP/Python source files found here. Run inside a repository.");
     console.log(dim("  https://contextdebt.dev"));
     return;
   }
@@ -241,7 +241,9 @@ function fetchIssue(owner, repo, num) {
   const rest = findings.filter((f) => !expired.includes(f) && !datedExpired.includes(f));
   if (rest.length > 0) {
     const show = showAll ? rest : rest.slice(0, 10);
-    console.log(`  ${bold("SELF-ADMITTED WORKAROUNDS")} ${dim(showAll ? "" : "(first 10 — use --all for all " + rest.length + ")")}`);
+    const skipped = findings.length - rest.length;
+    const restNote = "(showing " + Math.min(10, rest.length) + " of " + rest.length + (skipped > 0 ? " — " + skipped + " expired listed above" : "") + " — use --all)";
+    console.log(`  ${bold("SELF-ADMITTED WORKAROUNDS")} ${dim(showAll ? "" : restNote)}`);
     for (const f of show) {
       console.log(`  ${yellow(f.file + ":" + f.line)}  ${dim(f.text.slice(0, 90))}`);
     }

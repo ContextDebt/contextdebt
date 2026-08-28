@@ -8,7 +8,7 @@
 npx contextdebt
 ```
 
-Run it inside any JS/TS or WordPress/PHP repository. In seconds you get:
+Run it inside any JS/TS, WordPress/PHP, or Python repository. In seconds you get:
 
 - every **self-admitted workaround** in your code (`workaround`, `until we upgrade`, `TODO: remove when ...`)
 - for comments that reference GitHub issues: whether that issue is **already closed** — i.e. the reason your own comment cites is **expired**

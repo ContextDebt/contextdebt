@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4 — 2026-08-29
+
+Python support.
+
+- Scan `.py` and `.pyi` files — markers and the date detector work as-is
+- Exclude Python noise dirs: venv, .venv, site-packages, __pycache__, .tox, .mypy_cache, .ruff_cache, t
+- Fixed the "(use --all)" count so it no longer disagrees with the total when expired findings are listed separately
+
 ## 0.1.3 — 2026-08-29
 
 WordPress edition preview.
