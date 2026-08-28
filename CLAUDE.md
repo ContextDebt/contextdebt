@@ -40,4 +40,6 @@ Product strategy, pricing, and roadmap live outside this repo (internal white pa
 
 ## Backlog (engineering)
 
-- v0.1.4: ตัวเลขบรรทัด "(use --all for all N)" นับหลังหัก dated/expired ออกแล้ว ทำให้ดูไม่ตรงกับยอด markers รวม — ปรับข้อความหรือแสดงยอดให้สอดคล้อง
+- v0.1.5 precision pass (สามเคสจริงจาก CPython stdlib + symfony):
+  (1) MARKER ชน identifier ในโค้ด ("kludge = 0" ใน aifc.py) — สำหรับไฟล์ .py/.pyi ต้องบังคับ comment context (มี # ก่อนตำแหน่ง match) เหมือนที่ทำกับกลุ่ม removal แล้ว · พิจารณาบังคับทุกภาษา
+  (2) date detector แยก "วันที่เขียน" กับ "วันหมดอายุ" ไม่ออก ("# 2014-12-02 ch/doko Add workaround" นับเป็น expired) — วันที่ต้องมีคำ removal-intent ใกล้ๆ (remove/delete/after/until/by/deprecated) ถึงนับเป็น expiry · เคสยืนยันอีกอัน: symfony "Hack Standard Library (v4.40 - 2020-05-03)" = version stamp
