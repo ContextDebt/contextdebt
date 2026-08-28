@@ -41,7 +41,3 @@ Product strategy, pricing, and roadmap live outside this repo (internal white pa
 ## Backlog (engineering)
 
 - v0.1.4: ตัวเลขบรรทัด "(use --all for all N)" นับหลังหัก dated/expired ออกแล้ว ทำให้ดูไม่ตรงกับยอด markers รวม — ปรับข้อความหรือแสดงยอดให้สอดคล้อง
-- v0.1.3: zero-result output should still be useful ("either you're clean, or your debt is the silent kind — deep scan coming").
-- Support trac/other issue-tracker links (WordPress cites core.trac.wordpress.org, not GitHub).
-- More extensions: `.php`, `.liquid` (WordPress/Shopify wave).
-- `_autoresponse` thank-you email on the landing waitlist (site repo, not this one).
