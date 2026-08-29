@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5 — 2026-08-29
+
+Precision pass. Three real false positives from CPython and Symfony, gone.
+
+- Python markers must sit in a comment: on `.py`/`.pyi` a marker only counts when a `#` opens a comment to the left of the match. Kills identifiers and string literals like `kludge = 0`. Other languages are unchanged.
+- A date alone is no longer an expiry. An ISO date counts as an expiry date only when a removal intent (remove/delete/drop/after/until/by/expire) sits within one line of it — so authored dates (`# 2014-12-02 ch/doko Add workaround`) and version stamps (`Hack Standard Library (v4.40 - 2020-05-03)`) stop being reported as expired.
+- An adjacent line carrying its own date no longer lends its removal intent to a neighbouring date.
+
+Measured against v0.1.4: CPython drops from 1 "expired by own date" to 0 (the one was an authored date), Symfony from 1 to 0 (a version stamp). Symfony's 41 markers are untouched.
+
 ## 0.1.4 — 2026-08-29
 
 Python support.

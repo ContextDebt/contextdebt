@@ -15,7 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 const EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".liquid", ".py", ".pyi"]);
 const EXCLUDE_DIR = /^(node_modules|dist|build|out|vendor|coverage|\.git|\.next|\.turbo|\.cache|__tests__|__mocks__|test|tests|spec|e2e|fixtures|examples?|docs?|\.storybook|t|\.venv|venv|site-packages|__pycache__|\.tox|\.mypy_cache|\.ruff_cache)$/;
 const EXCLUDE_FILE = /\.(test|spec|stories|d)\.(js|jsx|ts|tsx|mjs|cjs)$|\.min\.js$/;
@@ -40,6 +40,47 @@ const MARKER_REMOVAL = new RegExp(
 const COMMENTISH = /(^|\s)(\/\/|\/\*|\*|#)|<!--|\{%-?\s*comment/;
 const ISSUE_URL = /github\.com\/([\w.-]+)\/([\w.-]+)\/(issues|pull)\/(\d+)/g;
 const TRAC_URL = /(?:core|meta)\.trac\.wordpress\.org\/ticket\/(\d+)/g;
+
+// Python has no block comments and no `//` — a bare marker word on a .py line is
+// usually an identifier ("kludge = 0" in CPython's aifc.py). Require a `#` to the
+// left of the match before trusting it.
+const PY_EXT = new Set([".py", ".pyi"]);
+// A date alone proves nothing: "# 2014-12-02 ch/doko Add workaround" is an authored
+// date and "Hack Standard Library (v4.40 - 2020-05-03)" is a version stamp. Only
+// treat a date as an expiry when something nearby says the code is meant to go away.
+const DATE_INTENT = /\b(?:remov\w*|delet\w*|drop\w*|after|until|by|expir\w*)\b/i;
+const ANY_DATE = /20\d{2}-\d{2}-\d{2}/;
+
+// Index of the first trustworthy marker match on a line, or -1.
+function markerIndex(line, isPy) {
+  const hits = [];
+  const m = MARKER.exec(line);
+  if (m) hits.push(m.index);
+  if (COMMENTISH.test(line)) {
+    const r = MARKER_REMOVAL.exec(line);
+    if (r) hits.push(r.index);
+  }
+  if (hits.length === 0) return -1;
+  if (!isPy) return Math.min(...hits);
+  const hash = line.indexOf("#");
+  if (hash === -1) return -1;
+  const commented = hits.filter((i) => i > hash);
+  return commented.length ? Math.min(...commented) : -1;
+}
+
+// The date on `lines[i]`, but only when a removal intent sits within ±1 line.
+// A neighbour that carries its own date is claimed by that date and lends nothing.
+function expiryDate(lines, i) {
+  const dm = lines[i].match(/(20\d{2}-\d{2}-\d{2})/);
+  if (!dm) return null;
+  if (DATE_INTENT.test(lines[i])) return dm[1];
+  for (const j of [i - 1, i + 1]) {
+    const n = lines[j];
+    if (n === undefined || ANY_DATE.test(n)) continue;
+    if (DATE_INTENT.test(n)) return dm[1];
+  }
+  return null;
+}
 
 // ---------- tiny ansi ----------
 const tty = process.stdout.isTTY;
@@ -77,24 +118,22 @@ function scan(root) {
       let text;
       try { text = fs.readFileSync(p, "utf8"); } catch { continue; }
       const lines = text.split("\n");
+      const isPy = PY_EXT.has(path.extname(e.name));
       loc += lines.length; files += 1;
       progress();
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].length > 500) continue; // minified/bundled line — not a human comment
-        const isMarker = MARKER.test(lines[i]) ||
-          (MARKER_REMOVAL.test(lines[i]) && COMMENTISH.test(lines[i]));
-        if (!isMarker) continue;
+        if (markerIndex(lines[i], isPy) === -1) continue;
         if (/(cannot|can\x27t|don\x27t|do not|won\x27t|shouldn\x27t|must not|never)\s+(be\s+)?(remove|delete)/i.test(lines[i])) continue;
         const ctx = lines.slice(Math.max(0, i - 2), i + 2).join("\n");
         const issues = [...ctx.matchAll(ISSUE_URL)].map((m) => ({
           url: m[0], owner: m[1], repo: m[2], num: m[4]
         }));
         const trac = [...ctx.matchAll(TRAC_URL)].map((m) => m[0]);
-        const dm = lines[i].match(/(20\d{2}-\d{2}-\d{2})/);
         findings.push({
           file: path.relative(root, p), line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
-          dated: dm ? dm[1] : null
+          dated: expiryDate(lines, i)
         });
       }
     }

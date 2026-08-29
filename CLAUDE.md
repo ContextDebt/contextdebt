@@ -36,10 +36,10 @@ Product strategy, pricing, and roadmap live outside this repo (internal white pa
 - GitHub API returns 403 from shared/datacenter IPs — always support `GITHUB_TOKEN`, degrade gracefully (report "not checked", never crash).
 - npm's website caches README for hours after publish — verify with `npm view contextdebt readme` before assuming a bad publish.
 - Regexes must stay case-insensitive: real-world markers are "TODO: Remove after 2026-04-30" (capital R) — a case-sensitive pattern missed the biggest find in benchmarking.
+- A date is only an expiry when a removal intent (remove/delete/drop/after/until/by/expire) is within ±1 line. A neighbour line that carries its own date is claimed by that date and lends no intent — without that, a `# TODO: Remove after <date>` line leaks its intent onto the version stamp above it.
 - Zero markers on a scan is a valid result (young codebases confess nothing), not a bug — but check `files scanned` isn't 0 first.
 
 ## Backlog (engineering)
 
-- v0.1.5 precision pass (สามเคสจริงจาก CPython stdlib + symfony):
-  (1) MARKER ชน identifier ในโค้ด ("kludge = 0" ใน aifc.py) — สำหรับไฟล์ .py/.pyi ต้องบังคับ comment context (มี # ก่อนตำแหน่ง match) เหมือนที่ทำกับกลุ่ม removal แล้ว · พิจารณาบังคับทุกภาษา
-  (2) date detector แยก "วันที่เขียน" กับ "วันหมดอายุ" ไม่ออก ("# 2014-12-02 ch/doko Add workaround" นับเป็น expired) — วันที่ต้องมีคำ removal-intent ใกล้ๆ (remove/delete/after/until/by/deprecated) ถึงนับเป็น expiry · เคสยืนยันอีกอัน: symfony "Hack Standard Library (v4.40 - 2020-05-03)" = version stamp
+- Python docstring markers are invisible (v0.1.5 trade-off): the `#`-before-match rule drops ~12 real markers in CPython that live in docstrings, e.g. `"""Workaround for zipfile.Path.is_file...`. Recovering them needs triple-quote state tracked across the scan — worth doing only if it stays cheap.
+- MARKER still hits identifiers outside Python (`var kludge = 0;` in .js). The comment-context rule is Python-only for now; widening it to every language is the obvious next precision step.
