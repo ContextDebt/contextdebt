@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.6 — 2026-08-29
+
+The comment-context rule reaches JS/TS.
+
+- Markers in `.js`/`.jsx`/`.ts`/`.tsx`/`.mjs`/`.cjs` only count inside a comment — after `//`, or within `/* */`. `var kludge = 0;` and `function hotfixQueue()` are identifiers, not confessions, and no longer flag.
+- Block comments are tracked across lines, so a marker on a bare line inside `/* ... */` is now found (v0.1.5 needed a `//`, `/*` or `*` on the line itself).
+- String literals are skipped when locating comments, so the `//` in `const u = "https://example.com/kludge"` no longer opens a fake comment, and `" * To remove this script ..."` inside a string stops flagging.
+- A marker word in code no longer hides a real one in the trailing comment on the same line: `var kludge = 0; // workaround until we upgrade` is reported. Same fix applies to Python — `kludge2 = 0  # workaround until we upgrade` was silently dropped before.
+- Regex literals are not parsed. A marker sitting after one on the same line can be missed; that costs recall, never precision.
+
+Measured on react (1,675 files, 368,879 LOC): 109 markers → 107, both drops real false positives (`delete this[propName];` in code, and a marker inside a string literal in a webpack config). axios and redux: unchanged. PHP and Liquid keep the old behaviour.
+
 ## 0.1.5 — 2026-08-29
 
 Precision pass. Three real false positives from CPython and Symfony, gone.
