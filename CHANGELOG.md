@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.8 — 2026-08-31
+
+Precision fix: closed is not fixed.
+
+- **Bug.** The expired filter asked only `state === "closed"`. GitHub's issues endpoint returns `"closed"` for three different endings, and two of them settle nothing: an issue closed as `not_planned` was refused — the workaround citing it is *permanent*, not expired — and a pull request closed without a merge shipped no fix at all. Both were reported as EXPIRED. On our census corpus of 978 cited references, 73 of 752 closed references were of these two kinds: roughly **one in ten of everything the tool would have called EXPIRED was wrong**.
+- `fetchIssue` now also resolves `is_pr` and `merged_at` (the same response already carries `pull_request.merged_at`, so this costs no extra request), and a new `reasonResolved()` decides: a PR counts only when merged, an issue only when closed for a reason other than `not_planned`.
+- New bucket, reported separately and not in red: **`N cite an issue closed without a fix`**, listed under CLOSED WITHOUT A FIX with the `state_reason` or "PR not merged". These are the opposite of expired debt — if anything they are permanent.
+- The EXPIRED line now reads "the issue they cite was closed as fixed".
+- `--json` gains `closed_unfixed`. No existing key was renamed.
+- `npm test` gains a fixed resolution table (no network): completed issue → expired, `not_planned` → not, open → not, merged PR → expired, unmerged PR → not, unresolved reference → not.
+
+Verified end to end against four live references (a completed issue, a `not_planned` issue, a merged PR, a closed unmerged PR): v0.1.7 called all four EXPIRED, v0.1.8 calls two EXPIRED and moves two to CLOSED WITHOUT A FIX.
+
 ## 0.1.7 — 2026-08-30
 
 Comment context for the last two languages, and Python docstrings recovered.

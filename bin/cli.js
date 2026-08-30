@@ -15,7 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.7";
+const VERSION = "0.1.8";
 const LANG = new Map([
   [".js", "js"], [".jsx", "js"], [".ts", "js"], [".tsx", "js"], [".mjs", "js"], [".cjs", "js"],
   [".php", "php"], [".liquid", "liquid"], [".py", "py"], [".pyi", "py"]
@@ -376,7 +376,11 @@ function fetchIssue(owner, repo, num) {
           if (res.statusCode !== 200) return resolve({ state: null, note: `HTTP ${res.statusCode}` });
           try {
             const d = JSON.parse(body);
-            resolve({ state: d.state, closed_at: d.closed_at, state_reason: d.state_reason, title: d.title });
+            resolve({
+              state: d.state, closed_at: d.closed_at, state_reason: d.state_reason, title: d.title,
+              is_pr: !!d.pull_request,
+              merged_at: d.pull_request && d.pull_request.merged_at
+            });
           } catch { resolve({ state: null, note: "parse error" }); }
         });
       }
@@ -386,8 +390,23 @@ function fetchIssue(owner, repo, num) {
   });
 }
 
+// Closed is not fixed. An issue closed as "not_planned" was refused — the workaround
+// that cites it is permanent, not expired. A pull request closed without a merge
+// shipped nothing. The issues endpoint returns state "closed" for both, and carries
+// `pull_request.merged_at` for PRs, so this needs no extra request.
+function reasonResolved(r) {
+  if (!r) return false;
+  if (r.is_pr) return !!r.merged_at;
+  return r.state === "closed" && r.state_reason !== "not_planned";
+}
+
+// A reference that is closed but settled nothing — the opposite of an expired reason.
+function closedWithoutFix(r) {
+  return !!r && r.state === "closed" && !reasonResolved(r);
+}
+
 // ---------- main ----------
-(async function main() {
+async function main() {
   const args = process.argv.slice(2);
   if (args.includes("--version") || args.includes("-v")) { console.log(VERSION); return; }
   if (args.includes("--help") || args.includes("-h")) {
@@ -436,8 +455,9 @@ function fetchIssue(owner, repo, num) {
     resolved[url] = await fetchIssue(i.owner, i.repo, i.num);
   }
 
-  const expired = findings.filter((f) =>
-    f.issues.some((i) => resolved[i.url] && resolved[i.url].state === "closed")
+  const expired = findings.filter((f) => f.issues.some((i) => reasonResolved(resolved[i.url])));
+  const closedUnfixed = findings.filter(
+    (f) => !expired.includes(f) && f.issues.some((i) => closedWithoutFix(resolved[i.url]))
   );
   const todayISO = new Date().toISOString().slice(0, 10);
   const datedExpired = findings.filter((f) => f.dated && f.dated < todayISO && !expired.includes(f));
@@ -454,7 +474,7 @@ function fetchIssue(owner, repo, num) {
     const tracRefs = [...new Set(findings.flatMap((f) => f.trac || []))];
     console.log(JSON.stringify({ version: VERSION, root, files, loc, markers: findings.length,
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
-      expired_reasons: expired.length,
+      expired_reasons: expired.length, closed_unfixed: closedUnfixed.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
       findings, issues: resolved }, null, 2));
@@ -465,7 +485,12 @@ function fetchIssue(owner, repo, num) {
   console.log(`  ${bold(loc.toLocaleString().padStart(7))}  lines of code`);
   console.log(`  ${bold(String(findings.length).padStart(7))}  self-admitted workarounds ${dim("(" + density.toFixed(2) + " per 10k LOC)")}`);
   if (expired.length > 0) {
-    console.log(`  ${redBold(String(expired.length).padStart(7))}  ${redBold("with EXPIRED reasons")} ${dim("— the issue they cite is already closed")}`);
+    console.log(`  ${redBold(String(expired.length).padStart(7))}  ${redBold("with EXPIRED reasons")} ${dim("— the issue they cite was closed as fixed")}`);
+  }
+  if (closedUnfixed.length > 0) {
+    console.log(`  ${bold(String(closedUnfixed.length).padStart(7))}  cite an issue closed without a fix`);
+    console.log(dim("           (not planned, or a pull request nobody merged) — these are not"));
+    console.log(dim("           expired; if anything they are permanent"));
   }
   if (datedExpired.length > 0) {
     console.log(`  ${redBold(String(datedExpired.length).padStart(7))}  ${redBold("past their own written expiry date")}`);
@@ -486,7 +511,7 @@ function fetchIssue(owner, repo, num) {
   if (expired.length > 0) {
     console.log(`  ${redBold("EXPIRED REASONS")} ${dim("— your own comments cite these; they're done:")}`);
     for (const f of expired) {
-      const i = f.issues.find((x) => resolved[x.url] && resolved[x.url].state === "closed");
+      const i = f.issues.find((x) => reasonResolved(resolved[x.url]));
       const r = resolved[i.url];
       const when = r.closed_at ? r.closed_at.slice(0, 10) : "?";
       console.log("");
@@ -497,11 +522,28 @@ function fetchIssue(owner, repo, num) {
     console.log("");
   }
 
-  const rest = findings.filter((f) => !expired.includes(f) && !datedExpired.includes(f));
+  if (closedUnfixed.length > 0) {
+    console.log(`  ${bold("CLOSED WITHOUT A FIX")} ${dim("— cited, closed, and settled nothing:")}`);
+    for (const f of closedUnfixed) {
+      const i = f.issues.find((x) => closedWithoutFix(resolved[x.url]));
+      const r = resolved[i.url];
+      const when = r.closed_at ? r.closed_at.slice(0, 10) : "?";
+      const why = r.is_pr ? "PR not merged" : r.state_reason || "no reason given";
+      console.log("");
+      console.log(`  ${yellow(f.file + ":" + f.line)}`);
+      console.log(`    ${dim(f.text)}`);
+      console.log(`    ${dim("↳ " + i.url + " — closed " + when + " (" + why + ")")}`);
+    }
+    console.log("");
+  }
+
+  const rest = findings.filter(
+    (f) => !expired.includes(f) && !datedExpired.includes(f) && !closedUnfixed.includes(f)
+  );
   if (rest.length > 0) {
     const show = showAll ? rest : rest.slice(0, 10);
     const skipped = findings.length - rest.length;
-    const restNote = "(showing " + Math.min(10, rest.length) + " of " + rest.length + (skipped > 0 ? " — " + skipped + " expired listed above" : "") + " — use --all)";
+    const restNote = "(showing " + Math.min(10, rest.length) + " of " + rest.length + (skipped > 0 ? " — " + skipped + " listed above" : "") + " — use --all)";
     console.log(`  ${bold("SELF-ADMITTED WORKAROUNDS")} ${dim(showAll ? "" : restNote)}`);
     for (const f of show) {
       console.log(`  ${yellow(f.file + ":" + f.line)}  ${dim(f.text.slice(0, 90))}`);
@@ -533,4 +575,8 @@ function fetchIssue(owner, repo, num) {
   console.log(dim("  These are the candidates your AI reads on every task."));
   console.log(dim("  Deep scan with evidence chains — coming soon: ") + bold("https://contextdebt.dev"));
   console.log("");
-})();
+}
+
+if (require.main === module) main();
+
+module.exports = { reasonResolved };
