@@ -10,7 +10,7 @@ npx contextdebt
 
 Run it inside any JS/TS, WordPress/PHP, or Python repository. In seconds you get:
 
-- every **self-admitted workaround** in your code (`workaround`, `until we upgrade`, `TODO: remove when ...`)
+- every **self-admitted workaround** in your comments (`workaround`, `until we upgrade`, `TODO: remove when ...`) — comments only, so an identifier like `var kludge = 0` or a UI string never counts
 - for comments that reference GitHub issues: whether that issue is **already closed** — i.e. the reason your own comment cites is **expired**
 
 ```

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.7 — 2026-08-30
+
+Comment context for the last two languages, and Python docstrings recovered.
+
+- **Python docstrings count now.** A triple-quoted block is treated as a comment when nothing but whitespace precedes it — that is what separates a docstring from data (`SQL = """select ..."""`) or an argument (`parser(description="""...""")`), where marker words are content. This recovers the ~12 CPython markers v0.1.5 traded away, including the `"""Workaround for zipfile.Path.is_file ..."""` that named the trade-off.
+- **Docstring spans are weak.** Explicit marker words (workaround/hack/kludge/hotfix) count inside a docstring; removal intents ("remove this", "delete when") do not. Docstrings are prose written for the reader, so `"""Remove this directory."""` in pathlib documents behaviour rather than confessing debt — counting those cost 9 false positives against 9 real finds.
+- **PHP comment context.** `//`, `#` and `/* */` count inside `<?php … ?>`; outside it the file is template output, where only `<!-- -->` counts. `#[Route(...)]` is PHP 8 attribute syntax, not a comment.
+- **Liquid comment context.** `{% comment %}` blocks (including the `{%- -%}` whitespace-control form) and HTML comments count; theme markup does not.
+- **Skipped build directories are now reported.** `build`, `dist` and `out` are still excluded at any depth — letting generated code in would cost precision — but the scan now says which ones it skipped, so a hand-written source dir that happens to be named `build` (CPython's `Tools/build`, 21 files) is visible instead of silently missing. Scan that path directly to include it. `--json` gains `skipped_dirs`.
+- **A fixture suite ships with the repo.** `npm test` scans `fixtures/` and compares every reported line against `fixtures/expected.json` — 15 lines across four languages, including the negative cases (`var kludge = 0;`, `const s = "remove this when done"`, `#[Group('doctrine-dbal-workaround')]`, `"""Remove this file or link."""`). Not published to npm.
+
+Measured against v0.1.6: CPython 66 → 75 markers (9 gained, 8 of them real docstring confessions), Symfony 41 → 34 (7 lost, all false positives: 4 PHP attributes, 2 emoji data rows, 1 test method name), react 107 → 107, Dawn 2 → 2.
+
+Known limits: PHP heredocs are not tracked, so a `//` inside one can open a false comment span. Liquid's inline `{% # ... %}` and `{% liquid %}` comment forms are not handled. The word "hack" used as a verb in prose ("you are supposed to hack that up yourself") still reads as a marker.
+
 ## 0.1.6 — 2026-08-29
 
 The comment-context rule reaches JS/TS.

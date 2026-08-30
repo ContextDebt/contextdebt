@@ -15,9 +15,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.6";
-const EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".php", ".liquid", ".py", ".pyi"]);
+const VERSION = "0.1.7";
+const LANG = new Map([
+  [".js", "js"], [".jsx", "js"], [".ts", "js"], [".tsx", "js"], [".mjs", "js"], [".cjs", "js"],
+  [".php", "php"], [".liquid", "liquid"], [".py", "py"], [".pyi", "py"]
+]);
+const EXT = new Set(LANG.keys());
 const EXCLUDE_DIR = /^(node_modules|dist|build|out|vendor|coverage|\.git|\.next|\.turbo|\.cache|__tests__|__mocks__|test|tests|spec|e2e|fixtures|examples?|docs?|\.storybook|t|\.venv|venv|site-packages|__pycache__|\.tox|\.mypy_cache|\.ruff_cache)$/;
+// `build`, `dist` and `out` are excluded at any depth, which is right for build
+// output and wrong for the occasional hand-written source dir (CPython's Tools/build).
+// We keep the exclusion — letting generated code in would cost precision — but report
+// what was skipped, so the escape hatch (scan that path directly) is discoverable.
+const OUTPUT_DIR = /^(dist|build|out)$/;
 const EXCLUDE_FILE = /\.(test|spec|stories|d)\.(js|jsx|ts|tsx|mjs|cjs)$|\.min\.js$/;
 
 const MARKER = new RegExp(
@@ -37,30 +46,22 @@ const MARKER_REMOVAL = new RegExp(
   ].join("|"),
   "gi"
 );
-const COMMENTISH = /(^|\s)(\/\/|\/\*|\*|#)|<!--|\{%-?\s*comment/;
 const ISSUE_URL = /github\.com\/([\w.-]+)\/([\w.-]+)\/(issues|pull)\/(\d+)/g;
 const TRAC_URL = /(?:core|meta)\.trac\.wordpress\.org\/ticket\/(\d+)/g;
 
-// Python has no block comments and no `//` — a bare marker word on a .py line is
-// usually an identifier ("kludge = 0" in CPython's aifc.py). Require a `#` to the
-// left of the match before trusting it.
-const PY_EXT = new Set([".py", ".pyi"]);
-// Same story in JS/TS: `var kludge = 0;` is an identifier, not a confession. A marker
-// only counts inside `//` or `/* */`. Block comments span lines, so the scan carries
-// the open-block state from line to line.
-const JS_EXT = new Set([".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]);
-// A date alone proves nothing: "# 2014-12-02 ch/doko Add workaround" is an authored
-// date and "Hack Standard Library (v4.40 - 2020-05-03)" is a version stamp. Only
-// treat a date as an expiry when something nearby says the code is meant to go away.
-const DATE_INTENT = /\b(?:remov\w*|delet\w*|drop\w*|after|until|by|expir\w*)\b/i;
-const ANY_DATE = /20\d{2}-\d{2}-\d{2}/;
-const NO_SPANS = [];
+// A span flagged WEAK holds prose rather than a code comment: explicit marker words
+// still count there, removal intents do not.
+const WEAK = true;
 
-// Comment text on a JS/TS line, as [start, end) ranges, given whether the previous
-// line left a block comment open. String literals are skipped so the `//` in
-// `const u = "https://x"` doesn't fake a comment. Regex literals are not parsed —
-// worst case a marker word after one is missed, which costs recall, never precision.
-function commentSpans(line, inBlock) {
+// A marker word only counts when it sits in a comment. Every supported language
+// has its own idea of what a comment is, so each one gets a scanner that returns
+// the comment ranges of a line plus the state to carry into the next line.
+// Ranges are [start, end) index pairs into the line.
+
+// JS/TS: `//` to end of line, `/* */` across lines. String literals are skipped so
+// the `//` in `const u = "https://x"` doesn't fake a comment. Regex literals are not
+// parsed — worst case a marker after one is missed, which costs recall, never precision.
+function jsSpans(line, inBlock) {
   const spans = [];
   let i = 0;
   let open = inBlock ? 0 : -1;
@@ -82,17 +83,169 @@ function commentSpans(line, inBlock) {
     }
     if (ch === "/" && line[i + 1] === "/") {
       spans.push([i + 2, line.length]);
-      return { spans, inBlock: false };
+      return { spans, state: false };
     }
     if (ch === "/" && line[i + 1] === "*") { open = i + 2; i += 2; continue; }
     i += 1;
   }
   if (open >= 0) {
     spans.push([open, line.length]);
-    return { spans, inBlock: true };
+    return { spans, state: true };
   }
-  return { spans, inBlock: false };
+  return { spans, state: false };
 }
+
+// Python: `#` to end of line, plus docstrings. A triple-quoted block counts as a
+// comment only when nothing but whitespace precedes it — that is what separates a
+// docstring from data (`SQL = """select ..."""`) or an argument
+// (`parser(description="""...""")`), where marker words are content, not confessions.
+// Docstring spans are marked weak: they are prose written for the reader, so
+// "Remove this directory." (pathlib) documents behaviour, it does not confess debt.
+// Carried state is null or { delim, counts }.
+function pySpans(line, open) {
+  const spans = [];
+  let i = 0;
+  let start = open ? 0 : -1;
+  while (i < line.length) {
+    if (open) {
+      const end = line.indexOf(open.delim, i);
+      if (end === -1) break;
+      if (open.counts) spans.push([start, end, WEAK]);
+      i = end + 3;
+      open = null;
+      start = -1;
+      continue;
+    }
+    const ch = line[i];
+    if (ch === "#") {
+      spans.push([i + 1, line.length]);
+      return { spans, state: null };
+    }
+    if (ch === '"' || ch === "'") {
+      const delim = line.slice(i, i + 3);
+      if (delim === '"""' || delim === "'''") {
+        // r/b/u/f prefixes belong to the quote, not to the code before it
+        const counts = line.slice(0, i).replace(/[rRbBuUfF]+$/, "").trim() === "";
+        const end = line.indexOf(delim, i + 3);
+        if (end !== -1) {
+          if (counts) spans.push([i + 3, end, WEAK]);
+          i = end + 3;
+          continue;
+        }
+        open = { delim, counts };
+        start = i + 3;
+        break;
+      }
+      i += 1;
+      while (i < line.length && line[i] !== ch) i += line[i] === "\\" ? 2 : 1;
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  if (open) {
+    if (open.counts) spans.push([start < 0 ? 0 : start, line.length, WEAK]);
+    return { spans, state: open };
+  }
+  return { spans, state: null };
+}
+
+// PHP is two languages in one file. Outside `<?php … ?>` the text is template output —
+// marker words there are page copy, so only `<!-- -->` counts. Inside the code block,
+// `//`, `#` and `/* */` count. `#[Attribute]` is PHP 8 syntax, not a comment.
+// Heredocs are not tracked; a `//` inside one can open a false comment span.
+// Carried state is { inPhp, block } where block is "/*", "<!--" or null.
+function phpSpans(line, st) {
+  const spans = [];
+  let i = 0;
+  let inPhp = st.inPhp;
+  let block = st.block;
+  let open = block ? 0 : -1;
+  while (i < line.length) {
+    if (block) {
+      const close = block === "/*" ? "*/" : "-->";
+      const end = line.indexOf(close, i);
+      if (end === -1) break;
+      spans.push([open, end]);
+      i = end + close.length;
+      block = null;
+      open = -1;
+      continue;
+    }
+    if (!inPhp) {
+      const tag = line.indexOf("<?", i);
+      const html = line.indexOf("<!--", i);
+      if (html !== -1 && (tag === -1 || html < tag)) {
+        block = "<!--"; open = html + 4; i = open;
+        continue;
+      }
+      if (tag === -1) break;
+      inPhp = true;
+      i = tag + 2;
+      continue;
+    }
+    const ch = line[i];
+    if (ch === '"' || ch === "'") {
+      i += 1;
+      while (i < line.length && line[i] !== ch) i += line[i] === "\\" ? 2 : 1;
+      i += 1;
+      continue;
+    }
+    if (ch === "?" && line[i + 1] === ">") { inPhp = false; i += 2; continue; }
+    if ((ch === "#" && line[i + 1] !== "[") || (ch === "/" && line[i + 1] === "/")) {
+      const from = ch === "#" ? i + 1 : i + 2;
+      const end = line.indexOf("?>", from); // a line comment also ends at `?>`
+      if (end === -1) {
+        spans.push([from, line.length]);
+        return { spans, state: { inPhp, block: null } };
+      }
+      spans.push([from, end]);
+      inPhp = false;
+      i = end + 2;
+      continue;
+    }
+    if (ch === "/" && line[i + 1] === "*") { block = "/*"; open = i + 2; i += 2; continue; }
+    i += 1;
+  }
+  if (block) spans.push([open, line.length]);
+  return { spans, state: { inPhp, block } };
+}
+
+const LIQUID_OPEN = /<!--|\{%-?\s*comment\s*-?%\}/g;
+const LIQUID_END = { html: /-->/g, liquid: /\{%-?\s*endcomment\s*-?%\}/g };
+
+// Liquid templates: `{% comment %}` blocks and HTML comments. Everything else is
+// markup the shopper reads. Carried state is "html", "liquid" or null.
+function liquidSpans(line, st) {
+  const spans = [];
+  let i = 0;
+  let block = st;
+  let open = st ? 0 : -1;
+  while (i <= line.length) {
+    const re = block ? LIQUID_END[block] : LIQUID_OPEN;
+    re.lastIndex = i;
+    const m = re.exec(line);
+    if (!m) break;
+    if (block) {
+      spans.push([open, m.index]);
+      block = null;
+      open = -1;
+    } else {
+      block = m[0][0] === "<" ? "html" : "liquid";
+      open = m.index + m[0].length;
+    }
+    i = m.index + m[0].length;
+  }
+  if (block) {
+    spans.push([open, line.length]);
+    return { spans, state: block };
+  }
+  return { spans, state: null };
+}
+
+const INITIAL_STATE = { js: false, py: null, php: { inPhp: false, block: null }, liquid: null };
+const SPANNER = { js: jsSpans, py: pySpans, php: phpSpans, liquid: liquidSpans };
+function commentSpans(lang, line, state) { return SPANNER[lang](line, state); }
 
 // First index where `re` matches and `allow` accepts it, or -1. Walking past a
 // rejected match matters: `var kludge = 0; // workaround until we upgrade` is a
@@ -108,27 +261,26 @@ function firstMatch(re, line, allow) {
 }
 
 // Index of the first trustworthy marker match on a line, or -1.
-// `lang` is "py", "js", or null (PHP/Liquid — no comment-context rule yet).
-function markerIndex(line, lang, spans) {
-  let allow = () => true;
-  if (lang === "js") {
-    allow = (i) => spans.some(([s, e]) => i >= s && i < e);
-  } else if (lang === "py") {
-    const hash = line.indexOf("#");
-    allow = hash === -1 ? () => false : (i) => i > hash;
-  }
+function markerIndex(line, spans) {
+  const inAny = (i) => spans.some(([s, e]) => i >= s && i < e);
+  const inStrong = (i) => spans.some(([s, e, weak]) => !weak && i >= s && i < e);
   const hits = [];
-  const m = firstMatch(MARKER, line, allow);
+  const m = firstMatch(MARKER, line, inAny);
   if (m !== -1) hits.push(m);
-  // on JS/TS the spans already prove we are in a comment; elsewhere fall back to
-  // the cheap textual test.
-  const commentish = lang === "js" ? spans.length > 0 : COMMENTISH.test(line);
-  if (commentish) {
-    const r = firstMatch(MARKER_REMOVAL, line, allow);
+  // the spans already prove we are in a comment, so the removal intents — which are
+  // the ones that show up in UI strings — need no extra textual test.
+  if (spans.some(([, , weak]) => !weak)) {
+    const r = firstMatch(MARKER_REMOVAL, line, inStrong);
     if (r !== -1) hits.push(r);
   }
   return hits.length ? Math.min(...hits) : -1;
 }
+
+// A date alone proves nothing: "# 2014-12-02 ch/doko Add workaround" is an authored
+// date and "Hack Standard Library (v4.40 - 2020-05-03)" is a version stamp. Only
+// treat a date as an expiry when something nearby says the code is meant to go away.
+const DATE_INTENT = /\b(?:remov\w*|delet\w*|drop\w*|after|until|by|expir\w*)\b/i;
+const ANY_DATE = /20\d{2}-\d{2}-\d{2}/;
 
 // The date on `lines[i]`, but only when a removal intent sits within ±1 line.
 // A neighbour that carries its own date is claimed by that date and lends nothing.
@@ -153,6 +305,7 @@ const redBold = (s) => c(1)(c(31)(s));
 // ---------- walk & scan ----------
 function scan(root) {
   let loc = 0, files = 0;
+  const skipped = [];
   const findings = [];
   const stack = [root];
   const started = Date.now();
@@ -171,7 +324,8 @@ function scan(root) {
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const e of entries) {
       if (e.isDirectory()) {
-        if (!EXCLUDE_DIR.test(e.name)) stack.push(path.join(dir, e.name));
+        if (!EXCLUDE_DIR.test(e.name)) { stack.push(path.join(dir, e.name)); continue; }
+        if (OUTPUT_DIR.test(e.name)) skipped.push(path.relative(root, path.join(dir, e.name)));
         continue;
       }
       if (!e.isFile()) continue;
@@ -180,20 +334,16 @@ function scan(root) {
       let text;
       try { text = fs.readFileSync(p, "utf8"); } catch { continue; }
       const lines = text.split("\n");
-      const ext = path.extname(e.name);
-      const lang = PY_EXT.has(ext) ? "py" : JS_EXT.has(ext) ? "js" : null;
+      const lang = LANG.get(path.extname(e.name));
       loc += lines.length; files += 1;
       progress();
-      let inBlock = false;
+      let state = INITIAL_STATE[lang];
       for (let i = 0; i < lines.length; i++) {
-        let spans = NO_SPANS;
-        if (lang === "js") {
-          // must run before the length skip below, or a long line loses the block state
-          const cs = commentSpans(lines[i], inBlock);
-          spans = cs.spans; inBlock = cs.inBlock;
-        }
+        // must run before the length skip below, or a long line loses the block state
+        const cs = commentSpans(lang, lines[i], state);
+        state = cs.state;
         if (lines[i].length > 500) continue; // minified/bundled line — not a human comment
-        if (markerIndex(lines[i], lang, spans) === -1) continue;
+        if (markerIndex(lines[i], cs.spans) === -1) continue;
         if (/(cannot|can\x27t|don\x27t|do not|won\x27t|shouldn\x27t|must not|never)\s+(be\s+)?(remove|delete)/i.test(lines[i])) continue;
         const ctx = lines.slice(Math.max(0, i - 2), i + 2).join("\n");
         const issues = [...ctx.matchAll(ISSUE_URL)].map((m) => ({
@@ -209,7 +359,7 @@ function scan(root) {
     }
   }
   if (process.stderr.isTTY) process.stderr.write("\r" + " ".repeat(60) + "\r");
-  return { loc, files, findings };
+  return { loc, files, findings, skipped };
 }
 
 // ---------- tier 2: issue status ----------
@@ -269,7 +419,7 @@ function fetchIssue(owner, repo, num) {
   }
 
   const t0 = Date.now();
-  const { loc, files, findings } = scan(root);
+  const { loc, files, findings, skipped } = scan(root);
 
   if (files === 0) {
     console.log("  No JS/TS/PHP/Python source files found here. Run inside a repository.");
@@ -306,7 +456,7 @@ function fetchIssue(owner, repo, num) {
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
       expired_reasons: expired.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
-      trac_tickets_referenced: tracRefs.length,
+      trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
       findings, issues: resolved }, null, 2));
     return;
   }
@@ -362,6 +512,11 @@ function fetchIssue(owner, repo, num) {
   const unchecked = [...unique.keys()].filter((u) => !resolved[u] || resolved[u].state === null);
   if (unchecked.length > 0) {
     console.log(dim(`  ${unchecked.length} referenced issue(s) not checked (rate limit / network). Set GITHUB_TOKEN to check all.`));
+  }
+  if (skipped.length > 0) {
+    const shown = skipped.slice(0, 3).join(", ");
+    console.log(dim(`  ${skipped.length} build-output director${skipped.length === 1 ? "y" : "ies"} skipped (${shown}${skipped.length > 3 ? ", …" : ""}).`));
+    console.log(dim("  If one of those holds hand-written source, scan that path directly."));
   }
   if (datedUpcoming.length > 0) {
     console.log(dim(`  ${datedUpcoming.length} dated TODO(s) not due yet — watcher material.`));
