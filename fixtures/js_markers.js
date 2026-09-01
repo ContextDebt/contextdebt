@@ -12,3 +12,7 @@ function hotfixQueue() { return kludge; }
    remove this when the parser lands
 */
 const label = "We will delete this when the sale ends";
+// A date alone proves nothing: "# 2014-12-02 Add workaround" is an authored date
+// rejected match matters: `var kludge = 0; // workaround until we upgrade` is a
+// Workaround for the "flush on exit" bug in upstream
+// "workaround until X" is the shape we look for

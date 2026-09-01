@@ -15,7 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.8";
+const VERSION = "0.1.9";
 const LANG = new Map([
   [".js", "js"], [".jsx", "js"], [".ts", "js"], [".tsx", "js"], [".mjs", "js"], [".cjs", "js"],
   [".php", "php"], [".liquid", "liquid"], [".py", "py"], [".pyi", "py"]
@@ -260,10 +260,47 @@ function firstMatch(re, line, allow) {
   return -1;
 }
 
+// Quoted ranges on a line: text wrapped in a matching pair of " or ` on that same
+// line. A marker inside one is being cited, not confessed — linter rule docs, style
+// guides, security checklists and this scanner's own source all discuss markers
+// rather than admit to them. `'` is deliberately NOT a delimiter: apostrophes
+// ("don't", "won't") are far more common in English comments than quoting is, and a
+// lone one would swallow the rest of the line. An unmatched delimiter opens nothing.
+function quotedSpans(line) {
+  const spans = [];
+  let i = 0;
+  while (i < line.length) {
+    const ch = line[i];
+    if (ch === '"' || ch === "`") {
+      // a run of three is a Python docstring delimiter, not an inline quote — pairing
+      // it would swallow the whole docstring and undo v0.1.7
+      let run = 1;
+      while (line[i + run] === ch) run += 1;
+      if (run >= 3) { i += run; continue; }
+      const end = line.indexOf(ch, i + 1);
+      if (end !== -1) {
+        spans.push([i, end + 1]);
+        i = end + 1;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return spans;
+}
+
+const inRange = (ranges, i) => ranges.some(([s, e]) => i >= s && i < e);
+
 // Index of the first trustworthy marker match on a line, or -1.
 function markerIndex(line, spans) {
-  const inAny = (i) => spans.some(([s, e]) => i >= s && i < e);
-  const inStrong = (i) => spans.some(([s, e, weak]) => !weak && i >= s && i < e);
+  // computed on first use: most lines never reach a predicate at all
+  let quoted = null;
+  const unquoted = (i) => {
+    if (quoted === null) quoted = quotedSpans(line);
+    return !inRange(quoted, i);
+  };
+  const inAny = (i) => unquoted(i) && inRange(spans, i);
+  const inStrong = (i) => unquoted(i) && spans.some(([s, e, weak]) => !weak && i >= s && i < e);
   const hits = [];
   const m = firstMatch(MARKER, line, inAny);
   if (m !== -1) hits.push(m);
@@ -285,13 +322,21 @@ const ANY_DATE = /20\d{2}-\d{2}-\d{2}/;
 // The date on `lines[i]`, but only when a removal intent sits within ±1 line.
 // A neighbour that carries its own date is claimed by that date and lends nothing.
 function expiryDate(lines, i) {
-  const dm = lines[i].match(/(20\d{2}-\d{2}-\d{2})/);
-  if (!dm) return null;
-  if (DATE_INTENT.test(lines[i])) return dm[1];
+  // a date inside quotes is quoted too — `"Hack Standard Library (v4.40 - 2020-05-03)"`
+  // is an example being discussed, not a deadline anyone signed up to
+  const quoted = quotedSpans(lines[i]);
+  const re = /(20\d{2}-\d{2}-\d{2})/g;
+  let dated = null;
+  let m;
+  while ((m = re.exec(lines[i])) !== null) {
+    if (!inRange(quoted, m.index)) { dated = m[1]; break; }
+  }
+  if (!dated) return null;
+  if (DATE_INTENT.test(lines[i])) return dated;
   for (const j of [i - 1, i + 1]) {
     const n = lines[j];
     if (n === undefined || ANY_DATE.test(n)) continue;
-    if (DATE_INTENT.test(n)) return dm[1];
+    if (DATE_INTENT.test(n)) return dated;
   }
   return null;
 }

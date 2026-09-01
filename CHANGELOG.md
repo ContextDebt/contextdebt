@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.9 — 2026-09-01
+
+Quoted examples are citations, not confessions.
+
+- **The rule.** A marker inside a quoted span within a comment is being *cited*, not admitted. `quotedSpans()` finds text wrapped in a matching pair of `"` or `` ` `` on the same line, and `markerIndex()` now rejects any match that falls inside one. This is a general precision rule, not a special case: it matters for every repository that documents patterns — linter rule docs, style guides, security checklists — and most of all for this scanner, whose source is mostly comments *about* markers.
+- `'` is deliberately not a delimiter. Apostrophes ("don't", "won't") are far more common in English comments than quoting is, and a lone one would swallow the rest of the line. An unmatched delimiter opens nothing.
+- A run of three delimiters (`"""`) is skipped rather than paired — it is a Python docstring delimiter, not an inline quote. Without that exemption the rule swallows every docstring and silently undoes v0.1.7.
+- **Dates inside quotes are quoted too.** `expiryDate()` now walks to the first date *outside* a quoted span. `"Hack Standard Library (v4.40 - 2020-05-03)"` was being reported as an expiry against our own source; it is an example being discussed, not a deadline anyone signed up to.
+
+**Deliberate loss.** A real confession written entirely inside quotes — `// "workaround until X" is the shape we look for` — is now missed. There is no way to tell it apart from a citation without reading intent, and precision beats recall: a false "expired" claim costs more than a missed marker.
+
+**Measured.**
+
+- *This repository*, same 691-line corpus both ways: **8 markers → 2**, density **115.77 → 28.94 per 10k lines**, and the one "expired by own date" (the quoted version stamp above) drops to zero. Against the 108.36 figure quoted for the 646-line v0.1.8 source, the same 2 markers give 28.94.
+- *Fixtures*: 15 markers → 19, entirely from the four new YES cases (one per language). Every pre-existing fixture line is unchanged, dated expiries included.
+
+The drop is smaller than "all of it": two markers survive, and neither is a bug. `bin/cli.js:3` says "finds self-admitted workarounds in your codebase" and `bin/cli.js:438` says "was refused — the workaround", both plain prose outside any quotes. This rule reads punctuation, not intent, so prose that names a marker without quoting it still counts. 28.94 per 10k is no longer the densest reading in our census (redash, 81.22), but it is not zero and should not be reported as zero.
+
+Fixtures gain the four quoted-example cases in all four languages, and `fixtures/expected.json` lists the one YES case per language — so the suite now fails both when a NO case comes back and when a YES case stops being reported. Both directions were verified by breaking them on purpose.
+
 ## 0.1.8 — 2026-08-31
 
 Precision fix: closed is not fixed.

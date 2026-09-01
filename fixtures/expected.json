@@ -1,5 +1,5 @@
 {
-  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported. Line numbers are 1-based; update them when you edit a fixture.",
+  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here.",
   "expected": {
     "js_markers.js:2": null,
     "js_markers.js:4": "2025-01-01",
@@ -15,6 +15,10 @@
     "php_markers.php:10": null,
     "liquid_markers.liquid:2": null,
     "liquid_markers.liquid:3": "2024-05-01",
-    "liquid_markers.liquid:6": null
+    "liquid_markers.liquid:6": null,
+    "js_markers.js:17": null,
+    "py_markers.py:34": null,
+    "php_markers.php:16": null,
+    "liquid_markers.liquid:10": null
   }
 }
