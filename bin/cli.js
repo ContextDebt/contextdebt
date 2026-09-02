@@ -15,7 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.9";
+const VERSION = "0.1.10";
 const LANG = new Map([
   [".js", "js"], [".jsx", "js"], [".ts", "js"], [".tsx", "js"], [".mjs", "js"], [".cjs", "js"],
   [".php", "php"], [".liquid", "liquid"], [".py", "py"], [".pyi", "py"]
@@ -291,6 +291,40 @@ function quotedSpans(line) {
 
 const inRange = (ranges, i) => ranges.some(([s, e]) => i >= s && i < e);
 
+// The quoted ranges blanked out, so an address quoted as an example is not an address.
+function stripQuoted(line) {
+  const q = quotedSpans(line);
+  if (q.length === 0) return line;
+  let out = line;
+  for (const [s, e] of q) out = out.slice(0, s) + " ".repeat(e - s) + out.slice(e);
+  return out;
+}
+
+// An address is something a human can come back to. A keyword in front of a bare
+// number is what separates a tracker reference from `#fff`, `#[Route(...)]` and
+// "step #1": a missed address is a lead we pick up later, a false one is a false
+// claim in someone's check run.
+const ADDRESS_URL = /github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+/i;
+const ADDRESS_REPO = /\b[\w.-]+\/[\w.-]+#\d{1,6}\b/;
+const ADDRESS_SELF = /\b(?:issue|issues|bug|ticket|pr|gh)\s*#\s*\d{1,6}\b/i;
+const ADDRESS_DATE = /\b20\d{2}-\d{2}(?:-\d{2})?\b|\bin\s+20\d{2}\b/i;
+
+// The kind of address a marker carries, or null. Prose conditions ("when we drop
+// 3.7") are deliberately not detected — fuzzy matching would cost precision.
+//
+// `line` is the marker's own line; `ctx` is the ±2-line window the issue lookup
+// already treats as this marker's citation. A URL is read from the window, because
+// the convention is to park it on the line under the marker. A date or a `#N` is read
+// from the marker's own line only: on a neighbour it may well belong to a different
+// comment, and inheriting it would invent an address that nobody wrote here.
+function addressOf(line, ctx) {
+  if (ADDRESS_URL.test(ctx === undefined ? line : ctx)) return "url";
+  if (ADDRESS_REPO.test(line)) return "repo";
+  if (ADDRESS_SELF.test(line)) return "self";
+  if (ADDRESS_DATE.test(line)) return "date";
+  return null;
+}
+
 // Index of the first trustworthy marker match on a line, or -1.
 function markerIndex(line, spans) {
   // computed on first use: most lines never reach a predicate at all
@@ -395,10 +429,13 @@ function scan(root) {
           url: m[0], owner: m[1], repo: m[2], num: m[4]
         }));
         const trac = [...ctx.matchAll(TRAC_URL)].map((m) => m[0]);
+        // same window as the issue lookup — a comment is the block, not one line —
+        // but with quoted examples blanked out first
+        const addrCtx = lines.slice(Math.max(0, i - 2), i + 2).map(stripQuoted).join("\n");
         findings.push({
           file: path.relative(root, p), line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
-          dated: expiryDate(lines, i)
+          dated: expiryDate(lines, i), address: addressOf(stripQuoted(lines[i]), addrCtx)
         });
       }
     }
@@ -504,6 +541,8 @@ async function main() {
   const closedUnfixed = findings.filter(
     (f) => !expired.includes(f) && f.issues.some((i) => closedWithoutFix(resolved[i.url]))
   );
+  const investigable = findings.filter((f) => f.address !== null);
+  const unaddressed = findings.filter((f) => f.address === null);
   const todayISO = new Date().toISOString().slice(0, 10);
   const datedExpired = findings.filter((f) => f.dated && f.dated < todayISO && !expired.includes(f));
   const datedUpcoming = findings.filter((f) => f.dated && f.dated >= todayISO);
@@ -522,6 +561,7 @@ async function main() {
       expired_reasons: expired.length, closed_unfixed: closedUnfixed.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
+      notes: { investigable: investigable.length, unaddressed: unaddressed.length },
       findings, issues: resolved }, null, 2));
     return;
   }
@@ -620,8 +660,23 @@ async function main() {
   console.log(dim("  These are the candidates your AI reads on every task."));
   console.log(dim("  Deep scan with evidence chains — coming soon: ") + bold("https://contextdebt.dev"));
   console.log("");
+
+  // notes — which of the markers above left an address anyone can come back for
+  if (findings.length > 0) {
+    const n = findings.length;
+    const carried = investigable.length;
+    const left = unaddressed.length;
+    const second = left === 0
+      ? "every note here left an address. that is rarer than it sounds."
+      : `the other ${left} ${left === 1 ? "is" : "are"} honest, correct, and stuck.`;
+    console.log(`  ${bold("notes")}`);
+    console.log(dim(`    ${n} marker${n === 1 ? "" : "s"} ${n === 1 ? "is a" : "are"} self-admitted workaround${n === 1 ? "" : "s"}; ${carried} carr${carried === 1 ? "ies" : "y"} an address (issue link or date)`));
+    console.log(dim(`    someone can come back for. ${second}`));
+    console.log(dim("    census baseline: ~1 in 20. writing the returnable kind: contextdebt.dev/notes"));
+    console.log("");
+  }
 }
 
 if (require.main === module) main();
 
-module.exports = { reasonResolved };
+module.exports = { reasonResolved, addressOf };

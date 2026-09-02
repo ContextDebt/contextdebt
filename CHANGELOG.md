@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.10 — 2026-09-02
+
+The notes advisory: which confessions left an address.
+
+Presentational only. **No marker count changes, no new detection** — every number the census was built on stands.
+
+- **New `notes` block** at the end of the default report: how many of the markers already listed carry an address someone can come back for, and how many do not. Counts are derived from those same markers and reconcile exactly. Omitted when a scan finds nothing; when every marker carries an address, the second sentence swaps to say so.
+- **What counts as an address.** A full GitHub issue/PR URL (read from the same ±2-line window the issue lookup already treats as the marker's citation); `owner/repo#N`; a keyword-prefixed reference — `issue`/`issues`/`bug`/`ticket`/`pr`/`gh` followed by `#N` — resolving to the scanned repo's own tracker; or a date (`YYYY-MM-DD`, `YYYY-MM`, or "in 20XX"). Prose conditions ("when we drop 3.7") are deliberately not detected.
+- **A bare `#N` with no keyword is not an address.** `#fff`, `#[Route(...)]` and "step #1 in the runbook" are not tracker references, and a false address is a false claim in someone's check run. This is why `# quick hack for Issue #436` (celery) resolves and `# workaround, see #436` does not.
+- Dates and `#N` are read from the marker's **own line**. A date two lines away often belongs to a different comment, and inheriting it would invent an address nobody wrote. URLs keep the wider window, because parking the link on the line under the marker is the convention.
+- Quoted examples are excluded first, as of 0.1.9, so an address quoted as an example is not counted — and a marker written entirely inside quotes never reaches classification at all.
+- `--json` gains `notes: { investigable, unaddressed }` and a per-finding `address` (the kind, or null). No existing key renamed.
+
+**Fixtures.** New `fixtures/address_refs.py` carries 11 markers: three keyword references, one `owner/repo#N`, three date forms, four deliberately-unmatched bare-`#` cases, plus a quoted address that 0.1.9 drops before classification. The four existing language fixtures are untouched and still report the same 19 lines with the same expiry dates. `expected.json` gains an `addresses` map pinning the classification of all 30 lines, and the suite now also fails if the two buckets stop reconciling with the marker total.
+
+The full-URL case is tested in the offline table in `scripts/check.js` rather than in a fixture: a `github.com` URL inside `fixtures/` would make every test run reach for the API.
+
 ## 0.1.9 — 2026-09-01
 
 Quoted examples are citations, not confessions.
