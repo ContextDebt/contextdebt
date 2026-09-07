@@ -30,7 +30,7 @@ Product strategy, pricing, and roadmap live outside this repo (internal white pa
 
 1. Bump `VERSION` in `bin/cli.js` **and** `version` in `package.json` — they must match.
 2. Update `CHANGELOG.md` (keep-a-changelog style, newest first).
-3. Run `npm test` — scans `fixtures/` against `fixtures/expected.json` (15 lines, four languages, negative cases included). It fails on any line reported that is not listed, which is what catches a precision regression. Then test on a real repo: `node bin/cli.js <some repo>` and compare marker counts against the previous version; an unexplained drop over ~20% means stop and audit what was lost.
+3. Run `npm test` — scans `fixtures/` against `fixtures/expected.json` (35 lines, four languages, negative cases included). It fails on any line reported that is not listed, which is what catches a precision regression. Then test on a real repo: `node bin/cli.js <some repo>` and compare marker counts against the previous version; an unexplained drop over ~20% means stop and audit what was lost.
 4. Commit, tag `vX.Y.Z`, push.
 5. `npm publish` is **manual, by the human, with OTP**. Never automate publishing; never store npm tokens in CI. This is a supply-chain stance, not a missing feature.
 
@@ -38,6 +38,7 @@ Product strategy, pricing, and roadmap live outside this repo (internal white pa
 
 - GitHub API returns 403 from shared/datacenter IPs — always support `GITHUB_TOKEN`, degrade gracefully (report "not checked", never crash).
 - npm's website caches README for hours after publish — verify with `npm view contextdebt readme` before assuming a bad publish.
+- An expired npm token makes `npm publish` fail with **404, not 403** (`Not Found - PUT .../contextdebt`) — the registry hides a package you have no rights to. The name is fine; run `npm whoami` first (401 there is the real error) and `npm login` before re-publishing. Hit on the 0.1.11 release.
 - Regexes must stay case-insensitive: real-world markers are "TODO: Remove after 2026-04-30" (capital R) — a case-sensitive pattern missed the biggest find in benchmarking.
 - A date is only an expiry when a removal intent (remove/delete/drop/after/until/by/expire) is within ±1 line. A neighbour line that carries its own date is claimed by that date and lends no intent — without that, a `# TODO: Remove after <date>` line leaks its intent onto the version stamp above it.
 - `MARKER`/`MARKER_REMOVAL` are global (`gi`) regexes walked by `firstMatch()`, because the first match on a line can be in code while the real marker is in the trailing comment. Anything reusing them must reset `lastIndex` — `firstMatch` does.
@@ -55,3 +56,7 @@ Product strategy, pricing, and roadmap live outside this repo (internal white pa
 - Liquid's inline comment forms — `{% # ... %}` and comments inside `{% liquid %}` blocks — are not handled; only `{% comment %}` and `<!-- -->`.
 - The Liquid scanner has no real-world validation: Dawn (88 `.liquid` files) contains zero marker words, so only the fixture covers it. Find a theme with real markers before trusting the numbers.
 - "hack" used as a verb in prose still reads as a marker (`Lib/sched.py:4` — "you are supposed to hack that up yourself"). Telling verb from noun is not cheap; left alone deliberately.
+
+## Decisions
+
+Before any judgment call that touches the bigger picture, read `docs/decisions/`. If a fork is not covered there, stop and ask — do not guess.
