@@ -1,5 +1,5 @@
 {
-  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here. `addresses` pins the 0.1.10 note classification for the same lines: the kind of address the note carries, or null for unaddressed.",
+  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here. js_markers.js:19-22 are the 0.1.11 removal-intent shapes, one per shape, and :23 is the negative case that must stay unreported; mts_markers.mts proves .mts is read as TypeScript. `addresses` pins the 0.1.10 note classification for the same lines: the kind of address the note carries, or null for unaddressed.",
   "expected": {
     "js_markers.js:2": null,
     "js_markers.js:4": "2025-01-01",
@@ -30,7 +30,12 @@
     "address_refs.py:17": null,
     "address_refs.py:18": null,
     "address_refs.py:19": null,
-    "address_refs.py:20": null
+    "address_refs.py:20": null,
+    "js_markers.js:19": null,
+    "js_markers.js:20": null,
+    "js_markers.js:21": null,
+    "js_markers.js:22": null,
+    "mts_markers.mts:3": null
   },
   "addresses": {
     "address_refs.py:6": "self",
@@ -62,6 +67,11 @@
     "py_markers.py:2": null,
     "py_markers.py:4": null,
     "py_markers.py:9": null,
-    "py_markers.py:34": null
+    "py_markers.py:34": null,
+    "js_markers.js:19": null,
+    "js_markers.js:20": null,
+    "js_markers.js:21": null,
+    "js_markers.js:22": null,
+    "mts_markers.mts:3": null
   }
 }

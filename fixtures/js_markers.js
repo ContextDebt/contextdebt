@@ -16,3 +16,8 @@ const label = "We will delete this when the sale ends";
 // rejected match matters: `var kludge = 0; // workaround until we upgrade` is a
 // Workaround for the "flush on exit" bug in upstream
 // "workaround until X" is the shape we look for
+// we can use structuredClone once we drop Node 16
+// TODO: Remove the compat shim once the loader lands
+// Remove in v18.
+// TODO(v11): remove, the shim predates the rewrite
+// delete the bucket once we flush

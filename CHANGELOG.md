@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.11 — 2026-09-07
+
+Four more ways people write down that code is meant to go away.
+
+- **Removal intent, four new shapes.** `MARKER_REMOVAL` now also reads: `we can use|replace X once|after we|this|it|they …`; a tagged removal of a named object (`TODO: Remove the compat shim once the loader lands`); a version target (`Remove in v18.`); and a version carried in the tag (`TODO(v11): remove,`). Each one ships with the guard that makes it safe, not as an afterthought.
+- **The guards are the feature.** Shape one requires the clause after `once`/`after` to name a party or a thing — without it, `delete the bucket once we flush` reads as a confession when it is an instruction to the program, and `will be replaced by Next.js` reads as a deadline when nobody set one. Shape two requires a `TODO`/`FIXME`/`XXX` tag *and* the verb `remove` exactly, so `Delete source files after uploading` stays out. Shape three requires the version to follow `in` directly, which keeps prose like `will be removed in Python 3.17` where it belongs.
+- **Measured on four repos, verified line by line.** sentry-javascript 111 → 117, tldraw 28 → 29, nest 4 → 5, requests 2 → 3. Ten new markers, every one a real removal note someone wrote about their own code, and **zero previously-reported markers lost**.
+- **`.mts` and `.cts` are TypeScript.** They were being skipped entirely. Added to the language map and to the test/type-definition exclusions alongside `.ts`. nest's new marker lives in `vitest.config.integration.mts` — a file the scanner could not see before.
+- **The oracle says when it does not know.** `--json` gains `issues_resolved`, `issues_unchecked`, `oracle_status` (`no_references` / `unavailable` / `partial` / `complete`) and `oracle_note`. When no reference could be resolved, `expired_reasons` and `closed_unfixed` are now **`null`, not `0`** — "we checked and found none" and "we could not check" are different claims and printing them as the same number was a quiet lie. The human report says it in words: *expired reasons: unknown, not zero*. No existing key renamed.
+
+**Fixtures.** `js_markers.js` gains lines 19-23: one per new shape, plus `// delete the bucket once we flush` as a negative case that must stay unreported. New `fixtures/mts_markers.mts` proves `.mts` is read as TypeScript and that a marker in a string literal there is still ignored. `expected.json` goes 30 → 35 lines, addresses included; the suite still fails on any reported line that is not listed.
+
 ## 0.1.10 — 2026-09-02
 
 The notes advisory: which confessions left an address.

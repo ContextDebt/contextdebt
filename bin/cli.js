@@ -15,9 +15,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.10";
+const VERSION = "0.1.11";
 const LANG = new Map([
   [".js", "js"], [".jsx", "js"], [".ts", "js"], [".tsx", "js"], [".mjs", "js"], [".cjs", "js"],
+  [".mts", "js"], [".cts", "js"],
   [".php", "php"], [".liquid", "liquid"], [".py", "py"], [".pyi", "py"]
 ]);
 const EXT = new Set(LANG.keys());
@@ -27,7 +28,7 @@ const EXCLUDE_DIR = /^(node_modules|dist|build|out|vendor|coverage|\.git|\.next|
 // We keep the exclusion — letting generated code in would cost precision — but report
 // what was skipped, so the escape hatch (scan that path directly) is discoverable.
 const OUTPUT_DIR = /^(dist|build|out)$/;
-const EXCLUDE_FILE = /\.(test|spec|stories|d)\.(js|jsx|ts|tsx|mjs|cjs)$|\.min\.js$/;
+const EXCLUDE_FILE = /\.(test|spec|stories|d)\.(js|jsx|ts|tsx|mjs|cjs|mts|cts)$|\.min\.js$/;
 
 const MARKER = new RegExp(
   [
@@ -42,7 +43,21 @@ const MARKER = new RegExp(
 const MARKER_REMOVAL = new RegExp(
   [
     "(?:remove|delete)\\s+(?:this|once|when|after)\\b",
-    "(?:can|should|will)\\s+be\\s+(?:removed|deleted)\\s+(?:when|once|after|in|by)"
+    "(?:can|should|will)\\s+be\\s+(?:removed|deleted)\\s+(?:when|once|after|in|by)",
+    // "we can use structuredClone once we drop Node 16" — the clause after once/after
+    // must name a party or a thing. Without that guard the shape swallows instructions
+    // to the program ("delete the bucket once we flush") and plans nobody dated
+    // ("will be replaced by Next.js").
+    "\\bwe\\s+can\\s+(?:use|replace)\\b.{0,60}?\\b(?:once|after)\\s+(?:we|this|it|they)\\b",
+    // "TODO: Remove the compat shim once the loader lands" — a tagged removal of a
+    // named object. The tag is required and the verb must be exactly `remove`:
+    // "Delete source files after uploading" is what the code does, not a confession.
+    "\\b(?:TODO|FIXME|XXX)\\b.{0,24}?\\bremove\\b.{0,60}?\\b(?:once|after)\\b",
+    // "Remove in v18." — a version target. The number must follow "in" directly, so
+    // "will be removed in Python 3.17" (prose, and usually a docstring) stays out.
+    "\\bremove\\s+in\\s+v?\\d+(?:\\.\\d+)*\\b",
+    // "TODO(v11): remove," — the version rides inside the tag instead of the sentence.
+    "\\b(?:TODO|FIXME|XXX)\\s*\\(\\s*v?\\d+(?:\\.\\d+)*\\s*\\)\\s*:?\\s*remove\\b"
   ].join("|"),
   "gi"
 );
@@ -537,6 +552,23 @@ async function main() {
     resolved[url] = await fetchIssue(i.owner, i.repo, i.num);
   }
 
+  // How much of the oracle actually answered. A reference we could not reach tells us
+  // nothing, so "0 expired" and "we could not check" must not print as the same number:
+  // when nothing resolved, the expired counts are unknown, and unknown is null.
+  const referenced = unique.size;
+  const uncheckedUrls = [...unique.keys()].filter((u) => !resolved[u] || resolved[u].state === null);
+  const issuesResolved = referenced - uncheckedUrls.length;
+  const oracleStatus =
+    referenced === 0 ? "no_references"
+      : issuesResolved === 0 ? "unavailable"
+        : uncheckedUrls.length === 0 ? "complete" : "partial";
+  const oracleNote = {
+    no_references: "No issue reference found in these markers — nothing for the oracle to check.",
+    unavailable: `None of the ${referenced} referenced issue(s) could be checked (rate limit or network). The expired-reason counts are unknown here, not zero.`,
+    partial: `${issuesResolved} of ${referenced} referenced issue(s) checked; ${uncheckedUrls.length} could not be reached (rate limit or network).`,
+    complete: `All ${referenced} referenced issue(s) checked.`
+  }[oracleStatus];
+
   const expired = findings.filter((f) => f.issues.some((i) => reasonResolved(resolved[i.url])));
   const closedUnfixed = findings.filter(
     (f) => !expired.includes(f) && f.issues.some((i) => closedWithoutFix(resolved[i.url]))
@@ -558,7 +590,10 @@ async function main() {
     const tracRefs = [...new Set(findings.flatMap((f) => f.trac || []))];
     console.log(JSON.stringify({ version: VERSION, root, files, loc, markers: findings.length,
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
-      expired_reasons: expired.length, closed_unfixed: closedUnfixed.length,
+      issues_resolved: issuesResolved, issues_unchecked: uncheckedUrls.length,
+      oracle_status: oracleStatus, oracle_note: oracleNote,
+      expired_reasons: issuesResolved === 0 ? null : expired.length,
+      closed_unfixed: issuesResolved === 0 ? null : closedUnfixed.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
       notes: { investigable: investigable.length, unaddressed: unaddressed.length },
@@ -579,6 +614,11 @@ async function main() {
   }
   if (datedExpired.length > 0) {
     console.log(`  ${redBold(String(datedExpired.length).padStart(7))}  ${redBold("past their own written expiry date")}`);
+  }
+  if (oracleStatus === "unavailable") {
+    console.log(`  ${bold("      ?")}  ${bold("expired reasons: unknown, not zero")}`);
+    console.log(dim(`           none of the ${referenced} referenced issue(s) could be checked (rate limit`));
+    console.log(dim("           or network). Set GITHUB_TOKEN and re-run to get an answer."));
   }
   console.log("");
   if (datedExpired.length > 0) {
@@ -636,9 +676,8 @@ async function main() {
     console.log("");
   }
 
-  const unchecked = [...unique.keys()].filter((u) => !resolved[u] || resolved[u].state === null);
-  if (unchecked.length > 0) {
-    console.log(dim(`  ${unchecked.length} referenced issue(s) not checked (rate limit / network). Set GITHUB_TOKEN to check all.`));
+  if (uncheckedUrls.length > 0) {
+    console.log(dim(`  ${uncheckedUrls.length} referenced issue(s) not checked (rate limit / network). Set GITHUB_TOKEN to check all.`));
   }
   if (skipped.length > 0) {
     const shown = skipped.slice(0, 3).join(", ");
