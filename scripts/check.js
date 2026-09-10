@@ -15,10 +15,11 @@
 
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const { reasonResolved, addressOf } = require(path.join(root, "bin", "cli.js"));
+const { reasonResolved, addressOf, scan } = require(path.join(root, "bin", "cli.js"));
 
 // closed !== fixed. Each row is [label, reference as fetchIssue resolves it, expected].
 const RESOLUTION_TABLE = [
@@ -62,12 +63,28 @@ if (tableProblems.length) {
   console.error(tableProblems.join("\n"));
   process.exit(1);
 }
-const expected = JSON.parse(fs.readFileSync(path.join(root, "fixtures", "expected.json"), "utf8")).expected;
+const spec = JSON.parse(fs.readFileSync(path.join(root, "fixtures", "expected.json"), "utf8"));
+const expected = spec.expected;
+const expectedAddresses = spec.addresses;
+const problems = [];
 
-const out = execFileSync(process.execPath, [path.join(root, "bin", "cli.js"), path.join(root, "fixtures"), "--json"], {
-  encoding: "utf8", env: { ...process.env, GITHUB_TOKEN: "" }
-});
-const report = JSON.parse(out);
+// ---- run 1: the CLI, with no history to read ----
+// The copy lives outside any git checkout on purpose. fixtures/ sits inside this
+// repository, so the real resolver would date a year-less deadline from our own commit
+// and the pinned answer would change the moment the fixture is committed. Outside a
+// checkout the resolver returns null, which is exactly the "no resolver" half of the
+// 0.1.12 contract.
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "contextdebt-fixtures-"));
+fs.cpSync(path.join(root, "fixtures"), tmp, { recursive: true });
+let report;
+try {
+  report = JSON.parse(execFileSync(process.execPath, [path.join(root, "bin", "cli.js"), tmp, "--json"], {
+    encoding: "utf8", env: { ...process.env, GITHUB_TOKEN: "" }
+  }));
+} finally {
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 const actual = {};
 const actualAddresses = {};
 for (const f of report.findings) {
@@ -75,13 +92,13 @@ for (const f of report.findings) {
   actualAddresses[`${f.file}:${f.line}`] = f.address;
 }
 
-const expectedAddresses = JSON.parse(fs.readFileSync(path.join(root, "fixtures", "expected.json"), "utf8")).addresses;
-const problems = [];
-
 // the notes block is presentational: the two buckets must account for every marker
 const { investigable, unaddressed } = report.notes;
 if (investigable + unaddressed !== report.markers) {
   problems.push(`  notes     ${investigable} + ${unaddressed} != ${report.markers} markers — buckets do not reconcile`);
+}
+if (report.dated_unresolved !== spec.dated_unresolved_without_resolver) {
+  problems.push(`  unresolved  expected ${spec.dated_unresolved_without_resolver} year-less deadline(s) with no resolver, got ${report.dated_unresolved}`);
 }
 
 for (const key of Object.keys(expectedAddresses)) {
@@ -98,6 +115,34 @@ for (const key of Object.keys(actual)) {
   if (!(key in expected)) problems.push(`  unwanted  ${key}  — reported, but not listed in expected.json`);
 }
 
+// ---- run 2: the same fixtures through a fake history resolver ----
+// A year-less deadline means nothing without the date it was written on. The table
+// below stands in for `git log -S`; the CLI and the App must both turn it into the
+// same year, so the outcome is pinned separately from run 1.
+const FAKE_HISTORY = spec.fake_history;
+const withResolver = scan(path.join(root, "fixtures"), {
+  dateLine: (file, lineNo) => FAKE_HISTORY[`${file}:${lineNo}`] || null
+});
+const resolvedExpected = { ...expected, ...spec.expected_with_resolver };
+const resolvedActual = {};
+for (const f of withResolver.findings) resolvedActual[`${f.file}:${f.line}`] = f.dated;
+for (const key of Object.keys(resolvedExpected)) {
+  if (!(key in resolvedActual)) problems.push(`  missing*  ${key}  — expected a report here with the resolver, got none`);
+  else if (resolvedActual[key] !== resolvedExpected[key]) {
+    problems.push(`  date*     ${key}  — with resolver expected ${resolvedExpected[key]}, got ${resolvedActual[key]}`);
+  }
+}
+for (const key of Object.keys(resolvedActual)) {
+  if (!(key in resolvedExpected)) problems.push(`  unwanted* ${key}  — reported with the resolver, but not listed`);
+}
+// the year a resolver produces must name the commit it came from, or it is a guess
+for (const key of Object.keys(spec.expected_with_resolver)) {
+  const f = withResolver.findings.find((x) => `${x.file}:${x.line}` === key);
+  if (f && f.date && !f.date.year_basis) {
+    problems.push(`  basis*    ${key}  — resolved a year-less date without naming the commit`);
+  }
+}
+
 if (problems.length) {
   console.error(`fixture check FAILED (${problems.length} problem(s)):`);
   console.error(problems.sort().join("\n"));
@@ -105,5 +150,6 @@ if (problems.length) {
 }
 console.log(
   `fixture check passed — ${RESOLUTION_TABLE.length} resolution rows, ${ADDRESS_TABLE.length} address rows, ` +
-  `${Object.keys(expected).length} lines, ${investigable} with an address`
+  `${Object.keys(expected).length} lines, ${investigable} with an address, ` +
+  `${report.dated_unresolved} unresolved without history / ${Object.keys(spec.expected_with_resolver).length} resolved with it`
 );

@@ -61,6 +61,11 @@ const MARKER_REMOVAL = new RegExp(
   ].join("|"),
   "gi"
 );
+// Month names, shared by the address classifier and the deadline detector. Kept as
+// one source so the two can never disagree about what a date looks like.
+const MONTH_NAMES = "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?";
+const MONTH_NUM = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+
 const ISSUE_URL = /github\.com\/([\w.-]+)\/([\w.-]+)\/(issues|pull)\/(\d+)/g;
 const TRAC_URL = /(?:core|meta)\.trac\.wordpress\.org\/ticket\/(\d+)/g;
 
@@ -322,7 +327,17 @@ function stripQuoted(line) {
 const ADDRESS_URL = /github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+/i;
 const ADDRESS_REPO = /\b[\w.-]+\/[\w.-]+#\d{1,6}\b/;
 const ADDRESS_SELF = /\b(?:issue|issues|bug|ticket|pr|gh)\s*#\s*\d{1,6}\b/i;
-const ADDRESS_DATE = /\b20\d{2}-\d{2}(?:-\d{2})?\b|\bin\s+20\d{2}\b/i;
+const ADDRESS_DATE = new RegExp(
+  [
+    "\\b20\\d{2}-\\d{2}(?:-\\d{2})?\\b",
+    "\\bin\\s+20\\d{2}\\b",
+    "\\bQ[1-4]\\s+20\\d{2}\\b",
+    `\\b(?:${MONTH_NAMES})\\.?,?\\s+(?:\\d{1,2}(?:st|nd|rd|th)?,?\\s+)?20\\d{2}\\b`,
+    `\\b(?:${MONTH_NAMES})\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`,
+    `\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTH_NAMES})\\b`
+  ].join("|"),
+  "i"
+);
 
 // The kind of address a marker carries, or null. Prose conditions ("when we drop
 // 3.7") are deliberately not detected — fuzzy matching would cost precision.
@@ -366,26 +381,116 @@ function markerIndex(line, spans) {
 // date and "Hack Standard Library (v4.40 - 2020-05-03)" is a version stamp. Only
 // treat a date as an expiry when something nearby says the code is meant to go away.
 const DATE_INTENT = /\b(?:remov\w*|delet\w*|drop\w*|after|until|by|expir\w*)\b/i;
-const ANY_DATE = /20\d{2}-\d{2}-\d{2}/;
 
-// The date on `lines[i]`, but only when a removal intent sits within ±1 line.
-// A neighbour that carries its own date is claimed by that date and lends nothing.
-function expiryDate(lines, i) {
-  // a date inside quotes is quoted too — `"Hack Standard Library (v4.40 - 2020-05-03)"`
-  // is an example being discussed, not a deadline anyone signed up to
-  const quoted = quotedSpans(lines[i]);
-  const re = /(20\d{2}-\d{2}-\d{2})/g;
-  let dated = null;
-  let m;
-  while ((m = re.exec(lines[i])) !== null) {
-    if (!inRange(quoted, m.index)) { dated = m[1]; break; }
+// A date is a DEADLINE only when all three hold: a removal intent sits in the same
+// comment (the v0.1.5 rule, unchanged); the date is introduced by a deadline
+// preposition or follows a removal verb directly; and it is not an authored-date
+// shape. JS/TS produced zero ISO dates in three census rounds and the one date that
+// existed was prose, which is why the shapes below matter more than the ISO one.
+const DEADLINE_PREP = /\b(?:after|by|before|until|once|on)\s+(?:the\s+)?$/i;
+const REMOVE_DIRECT = /\b(?:remov\w*|delet\w*|drop\w*|expir\w*)\b[^.;]{0,24}$/i;
+// "Added Oct 2019 for the old parser" is where the note came from, not when it dies.
+// These lines still carry an address; they never carry a verdict.
+const AUTHORED_DATE = /\b(?:added|creat(?:ed|es)?|wrote|written|since|as\s+of|updated|introduced)\b[^.;]{0,24}$/i;
+// A copyright header is a date nobody signed up to, and a year range is never a day.
+const NOT_A_DATE_LINE = /\u00a9|\(c\)\s*20\d{2}|\bcopyright\b/i;
+const YEAR_RANGE = /\b20\d{2}\s*[-\u2013\u2014]\s*20\d{2}\b/;
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const lastDayOf = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+const isoOf = (y, m, d) => `${y}-${pad2(m)}-${pad2(d)}`;
+const monthNum = (word) => MONTH_NUM[word.slice(0, 3).toLowerCase()];
+
+// Ordered most specific first: at the same index the longer match wins, so
+// "Oct 28, 2025" is never read as the year-less "Oct 28".
+const DATE_SHAPES = [
+  { format: "iso", re: /\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/g,
+    build: (m) => ({ y: +m[1], mo: +m[2], d: +m[3] }) },
+  { format: "iso", re: /\b(20\d{2})-(0[1-9]|1[0-2])\b(?!-)/g,
+    build: (m) => ({ y: +m[1], mo: +m[2], d: null }) },
+  { format: "prose", re: /\bQ([1-4])\s+(20\d{2})\b/gi,
+    build: (m) => ({ y: +m[2], mo: +m[1] * 3, d: null }) },
+  { format: "prose", re: new RegExp(`\\b(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d{2})\\b`, "gi"),
+    build: (m) => ({ y: +m[3], mo: monthNum(m[1]), d: +m[2] }) },
+  { format: "prose", re: new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_NAMES})\\.?,?\\s+(20\\d{2})\\b`, "gi"),
+    build: (m) => ({ y: +m[3], mo: monthNum(m[2]), d: +m[1] }) },
+  { format: "prose", re: new RegExp(`\\b(${MONTH_NAMES})\\.?,?\\s+(20\\d{2})\\b`, "gi"),
+    build: (m) => ({ y: +m[2], mo: monthNum(m[1]), d: null }) },
+  { format: "prose", re: new RegExp(`\\b(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "gi"),
+    build: (m) => ({ y: null, mo: monthNum(m[1]), d: +m[2] }) },
+  { format: "prose", re: new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${MONTH_NAMES})\\b`, "gi"),
+    build: (m) => ({ y: null, mo: monthNum(m[2]), d: +m[1] }) }
+];
+
+// Every date-shaped run on the line that is not inside a quoted span, longest first
+// at a given index, with anything nested inside an earlier match dropped.
+function dateCandidates(line) {
+  if (NOT_A_DATE_LINE.test(line) || YEAR_RANGE.test(line)) return [];
+  const quoted = quotedSpans(line);
+  const found = [];
+  for (const shape of DATE_SHAPES) {
+    shape.re.lastIndex = 0;
+    let m;
+    while ((m = shape.re.exec(line)) !== null) {
+      if (inRange(quoted, m.index)) continue;
+      const parts = shape.build(m);
+      if (!parts.mo) continue;
+      found.push({ index: m.index, end: m.index + m[0].length, raw: m[0], format: shape.format, parts });
+    }
   }
-  if (!dated) return null;
-  if (DATE_INTENT.test(lines[i])) return dated;
-  for (const j of [i - 1, i + 1]) {
-    const n = lines[j];
-    if (n === undefined || ANY_DATE.test(n)) continue;
-    if (DATE_INTENT.test(n)) return dated;
+  found.sort((a, b) => a.index - b.index || (b.end - b.index) - (a.end - a.index));
+  const kept = [];
+  for (const c of found) if (!kept.some((k) => c.index >= k.index && c.end <= k.end)) kept.push(c);
+  return kept;
+}
+
+const hasDate = (line) => line !== undefined && dateCandidates(line).length > 0;
+
+// The deadline on `lines[i]`, or null. `opts.dateLine(file, lineNo)` is the optional
+// history resolver: it returns { sha, date } for the commit that introduced a line,
+// and it is the ONLY way a year-less date gets a year. With no resolver such a date
+// is reported as unresolved — never guessed from the clock, never from the file mtime.
+function expiryDate(lines, i, opts) {
+  const line = lines[i];
+  const candidates = dateCandidates(line);
+  if (candidates.length === 0) return null;
+
+  // rule 1 (v0.1.5, unchanged): a removal intent in the same comment
+  let intent = DATE_INTENT.test(line);
+  if (!intent) {
+    for (const j of [i - 1, i + 1]) {
+      const n = lines[j];
+      if (n === undefined || hasDate(n)) continue; // a dated neighbour is claimed by its own date
+      if (DATE_INTENT.test(n)) { intent = true; break; }
+    }
+  }
+  if (!intent) return null;
+
+  for (const c of candidates) {
+    const before = line.slice(0, c.index);
+    if (AUTHORED_DATE.test(before)) continue;                          // rule 3
+    if (!DEADLINE_PREP.test(before) && !REMOVE_DIRECT.test(before)) continue; // rule 2
+    const { y, mo, d } = c.parts;
+    if (y !== null) {
+      return { kind: "dated", raw: c.raw, parsed: isoOf(y, mo, d === null ? lastDayOf(y, mo) : d), format: c.format };
+    }
+    // year-less: the author left it off, so only history can say which year they meant
+    const resolver = opts && opts.dateLine;
+    if (!resolver) return { kind: "dated_unresolved", raw: c.raw, reason: "no history resolver" };
+    let info = null;
+    try { info = resolver(opts.file, i + 1); } catch { info = null; }
+    if (!info || !info.date || !info.sha) {
+      return { kind: "dated_unresolved", raw: c.raw, reason: "no history for this line" };
+    }
+    // the first year in which <month day> falls on or after the commit that wrote it
+    let year = +info.date.slice(0, 4);
+    const day = d === null ? lastDayOf(year, mo) : d;
+    if (isoOf(year, mo, day) < info.date) year += 1;
+    return {
+      kind: "dated", raw: c.raw, format: c.format,
+      parsed: isoOf(year, mo, d === null ? lastDayOf(year, mo) : d),
+      year_basis: `commit ${info.sha} ${info.date}`
+    };
   }
   return null;
 }
@@ -397,7 +502,8 @@ const red = c(31), yellow = c(33), dim = c(2), bold = c(1);
 const redBold = (s) => c(1)(c(31)(s));
 
 // ---------- walk & scan ----------
-function scan(root) {
+function scan(root, opts = {}) {
+  const dateLine = opts.dateLine || null;
   let loc = 0, files = 0;
   const skipped = [];
   const findings = [];
@@ -447,16 +553,48 @@ function scan(root) {
         // same window as the issue lookup — a comment is the block, not one line —
         // but with quoted examples blanked out first
         const addrCtx = lines.slice(Math.max(0, i - 2), i + 2).map(stripQuoted).join("\n");
+        const rel = path.relative(root, p);
+        const date = expiryDate(lines, i, { file: rel, dateLine });
         findings.push({
-          file: path.relative(root, p), line: i + 1,
+          file: rel, line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
-          dated: expiryDate(lines, i), address: addressOf(stripQuoted(lines[i]), addrCtx)
+          dated: date && date.kind === "dated" ? date.parsed : null, date,
+          address: addressOf(stripQuoted(lines[i]), addrCtx)
         });
       }
     }
   }
   if (process.stderr.isTTY) process.stderr.write("\r" + " ".repeat(60) + "\r");
   return { loc, files, findings, skipped };
+}
+
+// ---------- history resolver (CLI side of the dateLine interface) ----------
+// A year-less deadline ("Remove after Aug 24") only means something next to the date
+// it was written on, so we ask git which commit introduced that exact line. A shallow
+// clone is refused on purpose: a boundary commit's date is not the line's date, and a
+// wrong year here would invent a deadline nobody set.
+function gitDateLine(root) {
+  const { execFileSync } = require("node:child_process");
+  const git = (args) => execFileSync("git", args, {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 5000
+  }).trim();
+  try {
+    if (git(["rev-parse", "--is-inside-work-tree"]) !== "true") return null;
+    if (git(["rev-parse", "--is-shallow-repository"]) === "true") return null;
+  } catch { return null; }
+  return (file, lineNo) => {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(root, file), "utf8").split("\n")[lineNo - 1];
+    } catch { return null; }
+    if (!text || !text.trim()) return null;
+    try {
+      const out = git(["log", "-S" + text.trim(), "--format=%H%x09%cs", "--reverse", "--", file]);
+      if (!out) return null;
+      const [sha, date] = out.split("\n")[0].split("\t");
+      return sha && date ? { sha, date } : null;
+    } catch { return null; }
+  };
 }
 
 // ---------- tier 2: issue status ----------
@@ -535,7 +673,7 @@ async function main() {
   }
 
   const t0 = Date.now();
-  const { loc, files, findings, skipped } = scan(root);
+  const { loc, files, findings, skipped } = scan(root, { dateLine: gitDateLine(root) });
 
   if (files === 0) {
     console.log("  No JS/TS/PHP/Python source files found here. Run inside a repository.");
@@ -578,6 +716,10 @@ async function main() {
   const todayISO = new Date().toISOString().slice(0, 10);
   const datedExpired = findings.filter((f) => f.dated && f.dated < todayISO && !expired.includes(f));
   const datedUpcoming = findings.filter((f) => f.dated && f.dated >= todayISO);
+  const datedUnresolved = findings.filter((f) => f.date && f.date.kind === "dated_unresolved");
+  const days = (a, b) => Math.floor((Date.parse(a) - Date.parse(b)) / 86400000);
+  for (const f of datedExpired) f.date.days_overdue = days(todayISO, f.dated);
+  for (const f of datedUpcoming) f.date.days_until = days(f.dated, todayISO);
   const secs = ((Date.now() - t0) / 1000).toFixed(1);
   if (+secs > 60 && !json) {
     console.log(dim("  note: slow scan usually means files are in a cloud-synced folder (iCloud/OneDrive)"));
@@ -595,6 +737,7 @@ async function main() {
       expired_reasons: issuesResolved === 0 ? null : expired.length,
       closed_unfixed: issuesResolved === 0 ? null : closedUnfixed.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
+      dated_unresolved: datedUnresolved.length,
       trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
       notes: { investigable: investigable.length, unaddressed: unaddressed.length },
       findings, issues: resolved }, null, 2));
@@ -687,6 +830,11 @@ async function main() {
   if (datedUpcoming.length > 0) {
     console.log(dim(`  ${datedUpcoming.length} dated TODO(s) not due yet — watcher material.`));
   }
+  if (datedUnresolved.length > 0) {
+    const n = datedUnresolved.length;
+    console.log(dim(`  ${n} note${n === 1 ? " names" : "s name"} a deadline without a year, and there is no history to date`));
+    console.log(dim(`  ${n === 1 ? "it" : "them"}. Scan a full clone (not a shallow one) and the year comes from the commit.`));
+  }
   const tracSet = new Set(findings.flatMap((f) => f.trac || []));
   if (tracSet.size > 0) {
     console.log(dim(`  ${tracSet.size} WordPress trac ticket(s) referenced — status check coming in the WP edition.`));
@@ -718,4 +866,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { reasonResolved, addressOf };
+module.exports = { reasonResolved, addressOf, expiryDate, scan, gitDateLine };

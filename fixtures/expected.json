@@ -1,5 +1,5 @@
 {
-  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here. js_markers.js:19-22 are the 0.1.11 removal-intent shapes, one per shape, and :23 is the negative case that must stay unreported; mts_markers.mts proves .mts is read as TypeScript. `addresses` pins the 0.1.10 note classification for the same lines: the kind of address the note carries, or null for unaddressed.",
+  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here. js_markers.js:19-22 are the 0.1.11 removal-intent shapes, one per shape, and :23 is the negative case that must stay unreported; mts_markers.mts proves .mts is read as TypeScript. `addresses` pins the 0.1.10 note classification for the same lines: the kind of address the note carries, or null for unaddressed. prose_dates.js pins the 0.1.12 deadline rules: :2/:4/:6 are deadlines (prose, quarter, month-year), :8 is year-less — null here and dated only under `expected_with_resolver` — and :10-:20 are the negatives (authored date, copyright, `as of`, a date with no removal intent, a TTL with no date, a year-less authored date). :22 is a quoted example and must not be reported at all.",
   "expected": {
     "js_markers.js:2": null,
     "js_markers.js:4": "2025-01-01",
@@ -35,7 +35,17 @@
     "js_markers.js:20": null,
     "js_markers.js:21": null,
     "js_markers.js:22": null,
-    "mts_markers.mts:3": null
+    "mts_markers.mts:3": null,
+    "prose_dates.js:2": "2025-10-28",
+    "prose_dates.js:4": "2025-09-30",
+    "prose_dates.js:6": "2026-10-31",
+    "prose_dates.js:8": null,
+    "prose_dates.js:10": null,
+    "prose_dates.js:12": null,
+    "prose_dates.js:14": null,
+    "prose_dates.js:16": null,
+    "prose_dates.js:18": null,
+    "prose_dates.js:20": null
   },
   "addresses": {
     "address_refs.py:6": "self",
@@ -72,6 +82,26 @@
     "js_markers.js:20": null,
     "js_markers.js:21": null,
     "js_markers.js:22": null,
-    "mts_markers.mts:3": null
+    "mts_markers.mts:3": null,
+    "prose_dates.js:2": "date",
+    "prose_dates.js:4": "date",
+    "prose_dates.js:6": "date",
+    "prose_dates.js:8": "date",
+    "prose_dates.js:10": "date",
+    "prose_dates.js:12": null,
+    "prose_dates.js:14": "date",
+    "prose_dates.js:16": "date",
+    "prose_dates.js:18": null,
+    "prose_dates.js:20": "date"
+  },
+  "dated_unresolved_without_resolver": 1,
+  "fake_history": {
+    "prose_dates.js:8": {
+      "sha": "e3a558d1cf",
+      "date": "2026-08-22"
+    }
+  },
+  "expected_with_resolver": {
+    "prose_dates.js:8": "2026-08-24"
   }
 }
