@@ -1,0 +1,5 @@
+{
+  "name": "floor-watching-fixture",
+  "version": "1.0.0",
+  "peerDependencies": { "vite": "^5.0.0" }
+}

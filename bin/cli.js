@@ -504,6 +504,8 @@ const redBold = (s) => c(1)(c(31)(s));
 // ---------- walk & scan ----------
 function scan(root, opts = {}) {
   const dateLine = opts.dateLine || null;
+  const floorCache = new Map();
+  const lockCache = new Map();
   let loc = 0, files = 0;
   const skipped = [];
   const findings = [];
@@ -555,10 +557,27 @@ function scan(root, opts = {}) {
         const addrCtx = lines.slice(Math.max(0, i - 2), i + 2).map(stripQuoted).join("\n");
         const rel = path.relative(root, p);
         const date = expiryDate(lines, i, { file: rel, dateLine });
+        // a "fixed in <pkg> <version>" claim the repository can settle by itself
+        let floor = null;
+        const claim = versionClaim(lines[i]);
+        if (claim) {
+          const found = manifestFloor(root, rel, claim.pkg, floorCache);
+          const lock = lockfileVersion(root, claim.pkg, lockCache);
+          floor = {
+            kind: "version_floor", pkg: claim.pkg, fixed_in: claim.fixed_in,
+            floor: found ? found.floor : null,
+            source: found ? found.source : null,
+            declared: found ? found.range : null,
+            manifest: found ? found.manifest : null,
+            status: !found ? "unresolved" : found.floor === null ? "unresolved"
+              : cmpVer(found.floor, claim.fixed_in) >= 0 ? "expired" : "watching"
+          };
+          if (lock) floor.lockfile_version = lock;
+        }
         findings.push({
           file: rel, line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
-          dated: date && date.kind === "dated" ? date.parsed : null, date,
+          dated: date && date.kind === "dated" ? date.parsed : null, date, floor,
           address: addressOf(stripQuoted(lines[i]), addrCtx)
         });
       }
@@ -566,6 +585,101 @@ function scan(root, opts = {}) {
   }
   if (process.stderr.isTTY) process.stderr.write("\r" + " ".repeat(60) + "\r");
   return { loc, files, findings, skipped };
+}
+
+// ---------- tier 3: the dependency floor ----------
+// "it was fixed in vite 5.1" is a claim the repository can settle by itself: if the
+// project's own floor for vite is already above 5.1, the reason the comment cites is
+// dead, and nothing had to leave the machine to prove it. The floor is what the project
+// promises to support, so that is what the verdict stands on; a lockfile line is
+// evidence printed beside it, never the verdict.
+const FIXED_IN = /\b(?:(?:fixed|resolved|landed|shipped|released|available)\s+in|since)\s+(@[\w.-]+\/[\w.-]+|[a-z][\w.-]*)[\s@]+v?(\d+(?:\.\d+){0,2})\b/i;
+const MANIFEST_FIELDS = ["peerDependencies", "dependencies", "devDependencies"];
+
+const verParts = (v) => { const p = String(v).split(".").map(Number); while (p.length < 3) p.push(0); return p; };
+// partial versions are padded, so "5.1" and "5.1.0" are the same floor
+function cmpVer(a, b) {
+  const x = verParts(a), y = verParts(b);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+  return 0;
+}
+
+// The lowest version any alternative of a range admits. "^6.4.0 || ^7.0.0" is 6.4.0,
+// ">=20.19.0" is 20.19.0, "~1.2.3" is 1.2.3. Anything we cannot read — "*", "latest",
+// a workspace or git range, an upper bound — returns null and the claim stays
+// unresolved. A guessed floor is a guessed verdict.
+function rangeFloor(range) {
+  if (typeof range !== "string") return null;
+  const r = range.trim();
+  if (!r || r === "*" || r === "latest" || r === "x") return null;
+  if (/^(?:workspace|catalog|file|link|npm|git|https?|github):/i.test(r)) return null;
+  let lowest = null;
+  for (const alt of r.split("||")) {
+    const a = alt.trim();
+    if (a.startsWith("<")) return null; // an upper bound says nothing about the floor
+    const m = a.match(/(\d+(?:\.\d+){0,2})/);
+    if (!m) return null;
+    if (lowest === null || cmpVer(m[1], lowest) < 0) lowest = m[1];
+  }
+  return lowest;
+}
+
+// The nearest package.json upward from the file, then the repo root. The first manifest
+// that declares the package is the answer, even when its range is unreadable — a
+// further-away declaration is not the one this file lives under.
+function manifestFloor(root, file, pkg, cache) {
+  const key = path.dirname(file) + "\u0000" + pkg;
+  if (cache.has(key)) return cache.get(key);
+  let out = null;
+  let dir = path.dirname(path.join(root, file));
+  const stop = path.resolve(root);
+  for (;;) {
+    let json = null;
+    try { json = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")); } catch { json = null; }
+    if (json) {
+      const manifest = path.relative(root, path.join(dir, "package.json")) || "package.json";
+      let hit = null;
+      for (const field of MANIFEST_FIELDS) {
+        if (json[field] && json[field][pkg] !== undefined) { hit = { field, range: json[field][pkg] }; break; }
+      }
+      if (!hit && pkg === "node" && json.engines && json.engines.node !== undefined) {
+        hit = { field: "engines", range: json.engines.node };
+      }
+      if (hit) { out = { floor: rangeFloor(hit.range), source: hit.field, range: hit.range, manifest }; break; }
+    }
+    if (path.resolve(dir) === stop || dir === path.dirname(dir)) break;
+    dir = path.dirname(dir);
+  }
+  cache.set(key, out);
+  return out;
+}
+
+// Evidence, not verdict: whatever the lockfile actually resolved for this package.
+function lockfileVersion(root, pkg, cache) {
+  if (cache.has(pkg)) return cache.get(pkg);
+  let found = null;
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+    const e = j.packages && j.packages[`node_modules/${pkg}`];
+    if (e && e.version) found = e.version;
+    else if (j.dependencies && j.dependencies[pkg] && j.dependencies[pkg].version) found = j.dependencies[pkg].version;
+  } catch { /* no npm lockfile here */ }
+  if (!found) {
+    try {
+      const text = fs.readFileSync(path.join(root, "pnpm-lock.yaml"), "utf8");
+      const re = new RegExp(`^  '?${pkg.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}'?@(\\d[\\w.+-]*):`, "m");
+      const m = text.match(re);
+      if (m) found = m[1];
+    } catch { /* no pnpm lockfile here */ }
+  }
+  cache.set(pkg, found);
+  return found;
+}
+
+// The version claim on a marker line, if it makes one.
+function versionClaim(line) {
+  const m = FIXED_IN.exec(stripQuoted(line));
+  return m ? { pkg: m[1], fixed_in: m[2] } : null;
 }
 
 // ---------- history resolver (CLI side of the dateLine interface) ----------
@@ -717,6 +831,9 @@ async function main() {
   const datedExpired = findings.filter((f) => f.dated && f.dated < todayISO && !expired.includes(f));
   const datedUpcoming = findings.filter((f) => f.dated && f.dated >= todayISO);
   const datedUnresolved = findings.filter((f) => f.date && f.date.kind === "dated_unresolved");
+  const floorExpired = findings.filter((f) => f.floor && f.floor.status === "expired");
+  const floorWatching = findings.filter((f) => f.floor && f.floor.status === "watching");
+  const floorUnresolved = findings.filter((f) => f.floor && f.floor.status === "unresolved");
   const days = (a, b) => Math.floor((Date.parse(a) - Date.parse(b)) / 86400000);
   for (const f of datedExpired) f.date.days_overdue = days(todayISO, f.dated);
   for (const f of datedUpcoming) f.date.days_until = days(f.dated, todayISO);
@@ -734,7 +851,12 @@ async function main() {
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
       issues_resolved: issuesResolved, issues_unchecked: uncheckedUrls.length,
       oracle_status: oracleStatus, oracle_note: oracleNote,
-      expired_reasons: issuesResolved === 0 ? null : expired.length,
+      expired_reasons: issuesResolved === 0 && floorExpired.length === 0 && referenced > 0
+        ? null : (issuesResolved === 0 ? 0 : expired.length) + floorExpired.length,
+      expired_by_issue: issuesResolved === 0 ? null : expired.length,
+      expired_by_version_floor: floorExpired.length,
+      version_floor_watching: floorWatching.length,
+      version_floor_unresolved: floorUnresolved.length,
       closed_unfixed: issuesResolved === 0 ? null : closedUnfixed.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       dated_unresolved: datedUnresolved.length,
@@ -776,6 +898,19 @@ async function main() {
     console.log("");
   }
 
+  if (floorExpired.length > 0) {
+    console.log(`  ${redBold("EXPIRED BY THE PROJECT'S OWN FLOOR")} ${dim("— the fix is already in the lowest version this repo supports:")}`);
+    for (const f of floorExpired) {
+      const v = f.floor;
+      console.log("");
+      console.log(`  ${yellow(f.file + ":" + f.line)}`);
+      console.log(`    ${dim(f.text)}`);
+      console.log(`    ${red("\u21b3 " + v.pkg + " " + v.fixed_in + " \u2264 floor " + v.floor + " (" + v.source + " " + v.declared + " in " + v.manifest + ")")}`);
+      if (v.lockfile_version) console.log(`    ${dim("\u21b3 lockfile resolves " + v.pkg + " " + v.lockfile_version)}`);
+    }
+    console.log("");
+  }
+
   if (expired.length > 0) {
     console.log(`  ${redBold("EXPIRED REASONS")} ${dim("— your own comments cite these; they're done:")}`);
     for (const f of expired) {
@@ -807,6 +942,7 @@ async function main() {
 
   const rest = findings.filter(
     (f) => !expired.includes(f) && !datedExpired.includes(f) && !closedUnfixed.includes(f)
+      && !floorExpired.includes(f)
   );
   if (rest.length > 0) {
     const show = showAll ? rest : rest.slice(0, 10);
@@ -829,6 +965,18 @@ async function main() {
   }
   if (datedUpcoming.length > 0) {
     console.log(dim(`  ${datedUpcoming.length} dated TODO(s) not due yet — watcher material.`));
+  }
+  if (floorWatching.length > 0) {
+    const n = floorWatching.length;
+    console.log(dim(`  ${n} note${n === 1 ? " names" : "s name"} a fix in a version above this repo's floor — watcher material,`));
+    for (const f of floorWatching.slice(0, 3)) {
+      console.log(dim(`    ${f.file}:${f.line} — ${f.floor.pkg} ${f.floor.fixed_in} > floor ${f.floor.floor}`));
+    }
+  }
+  if (floorUnresolved.length > 0) {
+    const n = floorUnresolved.length;
+    console.log(dim(`  ${n} version claim(s) could not be settled: the package is not in any manifest above the`));
+    console.log(dim("  file, or its range is one we refuse to read (workspace, git, \"*\"). Unresolved, not clean."));
   }
   if (datedUnresolved.length > 0) {
     const n = datedUnresolved.length;

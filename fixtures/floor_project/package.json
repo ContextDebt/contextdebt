@@ -1,0 +1,6 @@
+{
+  "name": "floor-fixture",
+  "version": "1.0.0",
+  "peerDependencies": { "vite": "^6.4.0 || ^7.0.0 || ^8.0.0" },
+  "dependencies": { "@scope/pkg": "^2.4.0" }
+}

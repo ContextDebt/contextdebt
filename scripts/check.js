@@ -115,6 +115,20 @@ for (const key of Object.keys(actual)) {
   if (!(key in expected)) problems.push(`  unwanted  ${key}  — reported, but not listed in expected.json`);
 }
 
+// a floor verdict is the one thing in this release that needs no network at all, so it
+// is pinned per line: expired, watching, or unresolved — never a silent absence
+const actualFloor = {};
+for (const f of report.findings) if (f.floor) actualFloor[`${f.file}:${f.line}`] = f.floor.status;
+for (const key of Object.keys(spec.expected_floor)) {
+  if (!(key in actualFloor)) problems.push(`  floor     ${key}  — expected a version claim here, got none`);
+  else if (actualFloor[key] !== spec.expected_floor[key]) {
+    problems.push(`  floor     ${key}  — expected ${spec.expected_floor[key]}, got ${actualFloor[key]}`);
+  }
+}
+for (const key of Object.keys(actualFloor)) {
+  if (!(key in spec.expected_floor)) problems.push(`  floor+    ${key}  — a version claim not listed in expected_floor`);
+}
+
 // ---- run 2: the same fixtures through a fake history resolver ----
 // A year-less deadline means nothing without the date it was written on. The table
 // below stands in for `git log -S`; the CLI and the App must both turn it into the
@@ -151,5 +165,6 @@ if (problems.length) {
 console.log(
   `fixture check passed — ${RESOLUTION_TABLE.length} resolution rows, ${ADDRESS_TABLE.length} address rows, ` +
   `${Object.keys(expected).length} lines, ${investigable} with an address, ` +
-  `${report.dated_unresolved} unresolved without history / ${Object.keys(spec.expected_with_resolver).length} resolved with it`
+  `${report.dated_unresolved} unresolved without history / ${Object.keys(spec.expected_with_resolver).length} resolved with it, ` +
+  `${Object.keys(spec.expected_floor).length} floor verdicts`
 );
