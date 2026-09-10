@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.12 — 2026-09-10
+
+The diagnosis layer: three oracles that stand on evidence already inside the repository.
+
+No network, no testimony, no guessing. A date the author wrote, a floor in the project's own manifest, a release the project has already shipped — each one settles a note without asking anybody anything. Unresolved stays unresolved.
+
+- **Prose deadlines.** JS/TS produced zero ISO dates in three census rounds, and the one date that existed was prose. The detector now reads `Oct 28, 2025`, `28 October 2025`, `October 2025` and `Q3 2025` (last day of the month or quarter), `2025-10`, and the year-less `Aug 24`.
+- **A date is a deadline only when all three hold**: a removal intent in the same comment (the v0.1.5 rule, unchanged), a deadline preposition introducing it — after / by / before / until / once / on — or a removal verb directly before it, and no authored-date shape in front of it. `Added Oct 2019 for the old parser` is where a note came from, not when it dies: it keeps its address and gains no verdict. Copyright headers and year ranges are never dates at all.
+- **The year of a year-less deadline is never assumed.** `expiryDate()` takes an optional `dateLine(path, lineNo)` resolver returning `{ sha, date }`. The year is the first one in which `<month day>` falls on or after the commit that introduced the line, and the answer names that commit in `year_basis`. With no resolver — and on a shallow clone, where a boundary commit's date is not the line's date — the note is `dated_unresolved`, reported in words, and `expired_by_own_date` does not move. Never the current year, never the file mtime.
+- **The dependency floor.** `it was fixed in vite 5.1` is settled by the project's own manifest: nearest `package.json` upward, `peerDependencies` → `dependencies` → `devDependencies` → `engines` for `node`. The floor is the lowest version any alternative of the range admits — `^6.4.0 || ^7.0.0 || ^8.0.0` is 6.4.0, `>=20.19.0` is 20.19.0. At or above the version named, the reason is dead; below it, the note is watcher material and both numbers are printed. `*`, `latest`, a workspace or git range, an upper bound, or a package no manifest declares all stay **unresolved** — a guessed floor is a guessed verdict. The lockfile is printed beside the floor as evidence and is never the verdict.
+- **The release they named.** ``TODO: Remove from `core-js@4` `` is a new marker shape, and the target must be version-like: `v18`, `4`, `3.0`, `core-js@4`. `remove from the array`, `remove from displays` and `Remove the surveyId from the displays array` are list operations and stay unreported — that guard is the whole shape. The verdict compares the target against the version the project calls itself: at or past it the reason is dead, short of it the note is watching (core-js at 3.50.0 against `core-js@4` is watching, not expired), under no manifest it is unresolved. **0.1.11's `Remove in v18.` and `TODO(v11): remove` gain the same verdict** — already counted, now answered.
+- `--json` gains `dated_unresolved`, `expired_by_version_floor`, `version_floor_watching`, `version_floor_unresolved`, `expired_by_own_version`, `own_version_watching`, `own_version_unresolved`, and a per-finding `date` / `floor` / `own`. `expired_reasons` now has two sources; `null` still means "we could not check", and a floor verdict — which needs no network — makes the count knowable. `expired_by_issue` keeps the issue-only number.
+
+**Measured** on fresh shallow clones at their default-branch HEADs, before → after, with the SHA measured. Zero previously-reported markers lost anywhere.
+
+| repo | SHA | markers | new |
+| --- | --- | --- | --- |
+| puppeteer | `499c713ae7` | 6 → 6 | `expired_by_own_date` 1 — `Oct 28, 2025`, prose |
+| vitest | `4944cf4988` | 10 → 10 | `expired_by_version_floor` 1 — vite 5.1 ≤ floor 6.4.0 |
+| core-js | `84e45fba09` | 49 → 450 | 401 release targets, all watching, 0 expired |
+| sentry-javascript | `9596f42001` | 115 → 115 | unchanged |
+| dub | `1eec307816` | 27 → 27 | `expired_by_own_date` 1 with history; `dated_unresolved` 1 shallow |
+| celery | `3e40f4332` | 14 → 14 | unchanged |
+
+core-js moving 49 → 450 is this tool changing, not the earlier census being wrong: it now reads `Remove from <target>`, which core-js writes four hundred–odd times and almost nobody else writes at all. Every one of those is watching. Marker counts rise only where these shapes exist.
+
+**Fixtures** 35 → 53 lines. `prose_dates.js` carries one line per rule and every negative the spec names — an authored date, a copyright header, `as of March 2024`, a date in a sentence with no removal intent, a TTL with no date at all, and a year-less deadline inside a quoted example. Two tiny projects pin the floor (the same claim is expired under `^6.4.0` and watcher material under `^5.0.0`) and two more pin the release target (expired at 22.4.1, watching at 3.50.0). The suite now runs the fixtures **twice** — once through the CLI with no history to read, once in-process with a fake resolver — and `expected.json` pins both outcomes, plus every floor verdict and release target per line.
+
+**The App matches.** The GitHub App's engine was ported, not reimplemented: fixtures 53 = 53 and celery `3e40f433` 14 = 14, identical on file, line, date, floor status, release status and address. Two things differ because the environment does — manifests arrive as a map out of the tarball rather than a filesystem walk, and a year-less deadline is resolved afterwards through blame instead of `git log -S`, which can only ever read a deadline as newer, never older.
+
 ## 0.1.11 — 2026-09-07
 
 Four more ways people write down that code is meant to go away.
