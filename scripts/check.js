@@ -129,6 +129,20 @@ for (const key of Object.keys(actualFloor)) {
   if (!(key in spec.expected_floor)) problems.push(`  floor+    ${key}  — a version claim not listed in expected_floor`);
 }
 
+// the release-target verdict, pinned the same way: a list operation must never appear
+// here at all, and a marker under no manifest must stay unresolved rather than clean
+const actualOwn = {};
+for (const f of report.findings) if (f.own) actualOwn[`${f.file}:${f.line}`] = f.own.status;
+for (const key of Object.keys(spec.expected_own_version)) {
+  if (!(key in actualOwn)) problems.push(`  own       ${key}  — expected a release target here, got none`);
+  else if (actualOwn[key] !== spec.expected_own_version[key]) {
+    problems.push(`  own       ${key}  — expected ${spec.expected_own_version[key]}, got ${actualOwn[key]}`);
+  }
+}
+for (const key of Object.keys(actualOwn)) {
+  if (!(key in spec.expected_own_version)) problems.push(`  own+      ${key}  — a release target not listed in expected_own_version`);
+}
+
 // ---- run 2: the same fixtures through a fake history resolver ----
 // A year-less deadline means nothing without the date it was written on. The table
 // below stands in for `git log -S`; the CLI and the App must both turn it into the
@@ -166,5 +180,5 @@ console.log(
   `fixture check passed — ${RESOLUTION_TABLE.length} resolution rows, ${ADDRESS_TABLE.length} address rows, ` +
   `${Object.keys(expected).length} lines, ${investigable} with an address, ` +
   `${report.dated_unresolved} unresolved without history / ${Object.keys(spec.expected_with_resolver).length} resolved with it, ` +
-  `${Object.keys(spec.expected_floor).length} floor verdicts`
+  `${Object.keys(spec.expected_floor).length} floor verdicts, ${Object.keys(spec.expected_own_version).length} release targets`
 );

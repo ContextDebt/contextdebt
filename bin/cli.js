@@ -57,7 +57,11 @@ const MARKER_REMOVAL = new RegExp(
     // "will be removed in Python 3.17" (prose, and usually a docstring) stays out.
     "\\bremove\\s+in\\s+v?\\d+(?:\\.\\d+)*\\b",
     // "TODO(v11): remove," — the version rides inside the tag instead of the sentence.
-    "\\b(?:TODO|FIXME|XXX)\\s*\\(\\s*v?\\d+(?:\\.\\d+)*\\s*\\)\\s*:?\\s*remove\\b"
+    "\\b(?:TODO|FIXME|XXX)\\s*\\(\\s*v?\\d+(?:\\.\\d+)*\\s*\\)\\s*:?\\s*remove\\b",
+    // "TODO: Remove from `core-js@4`" — a release the author named. The target must be
+    // version-like: "remove from the array" and "remove from displays" are what the code
+    // does to a list, and a tag alone would not tell them apart.
+    "\\b(?:TODO|FIXME|XXX)\\b.{0,24}?\\bremove\\s+from\\s+[`\u0027\"]?(?:@?[\\w.-]+(?:\\/[\\w.-]+)?@)?v?\\d+(?:\\.\\d+){0,2}\\b"
   ].join("|"),
   "gi"
 );
@@ -506,6 +510,7 @@ function scan(root, opts = {}) {
   const dateLine = opts.dateLine || null;
   const floorCache = new Map();
   const lockCache = new Map();
+  const ownCache = new Map();
   let loc = 0, files = 0;
   const skipped = [];
   const findings = [];
@@ -574,10 +579,23 @@ function scan(root, opts = {}) {
           };
           if (lock) floor.lockfile_version = lock;
         }
+        // a release the note names, judged against the version this project calls itself
+        let own = null;
+        const target = ownVersionTarget(lines[i]);
+        if (target) {
+          const mine = ownVersion(root, rel, ownCache);
+          own = {
+            kind: "own_version", target: target.pkg ? `${target.pkg}@${target.target}` : `v${target.target}`,
+            pkg: target.pkg, version: target.target,
+            own_version: mine ? mine.version : null,
+            manifest: mine ? mine.manifest : null,
+            status: !mine ? "unresolved" : cmpVer(mine.version, target.target) >= 0 ? "expired" : "watching"
+          };
+        }
         findings.push({
           file: rel, line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
-          dated: date && date.kind === "dated" ? date.parsed : null, date, floor,
+          dated: date && date.kind === "dated" ? date.parsed : null, date, floor, own,
           address: addressOf(stripQuoted(lines[i]), addrCtx)
         });
       }
@@ -680,6 +698,56 @@ function lockfileVersion(root, pkg, cache) {
 function versionClaim(line) {
   const m = FIXED_IN.exec(stripQuoted(line));
   return m ? { pkg: m[1], fixed_in: m[2] } : null;
+}
+
+// ---------- tier 4: the project's own version ----------
+// "Remove from `core-js@4`" is a deadline written in releases instead of days. The
+// repository can settle it alone: if the project is already at or past the release the
+// note names, the reason it cites is dead. The target must be version-like — a tag in
+// front of "remove from the displays array" is still a list operation.
+const OWN_VERSION_SHAPES = [
+  /\b(?:TODO|FIXME|XXX)\b.{0,24}?\bremove\s+from\s+[`\u0027"]?(?:(@?[\w.-]+(?:\/[\w.-]+)?)@)?v?(\d+(?:\.\d+){0,2})\b/i,
+  /\bremove\s+in\s+[`\u0027"]?(?:(@?[\w.-]+(?:\/[\w.-]+)?)@)?v?(\d+(?:\.\d+){0,2})\b/i,
+  /\b(?:TODO|FIXME|XXX)\s*\(\s*(?:(@?[\w.-]+(?:\/[\w.-]+)?)@)?v?(\d+(?:\.\d+){0,2})\s*\)\s*:?\s*remove\b/i
+];
+
+// The release a marker names, or null. Read from the raw line — core-js writes its
+// target inside backticks — but rejected when the phrase itself sits inside a quoted
+// span, which is the 0.1.9 rule doing its job on a cited example.
+function ownVersionTarget(line) {
+  const quoted = quotedSpans(line);
+  for (const re of OWN_VERSION_SHAPES) {
+    const m = re.exec(line);
+    if (!m) continue;
+    if (inRange(quoted, m.index)) continue;
+    return { pkg: m[1] || null, target: m[2], raw: m[0].trim() };
+  }
+  return null;
+}
+
+// The version this project calls itself, from the nearest package.json upward.
+function ownVersion(root, file, cache) {
+  const key = path.dirname(file);
+  if (cache.has(key)) return cache.get(key);
+  let out = null;
+  let dir = path.dirname(path.join(root, file));
+  const stop = path.resolve(root);
+  for (;;) {
+    try {
+      const json = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+      if (typeof json.version === "string" && /^\d/.test(json.version)) {
+        out = {
+          version: json.version, name: json.name || null,
+          manifest: path.relative(root, path.join(dir, "package.json")) || "package.json"
+        };
+        break;
+      }
+    } catch { /* keep walking up */ }
+    if (path.resolve(dir) === stop || dir === path.dirname(dir)) break;
+    dir = path.dirname(dir);
+  }
+  cache.set(key, out);
+  return out;
 }
 
 // ---------- history resolver (CLI side of the dateLine interface) ----------
@@ -834,6 +902,9 @@ async function main() {
   const floorExpired = findings.filter((f) => f.floor && f.floor.status === "expired");
   const floorWatching = findings.filter((f) => f.floor && f.floor.status === "watching");
   const floorUnresolved = findings.filter((f) => f.floor && f.floor.status === "unresolved");
+  const ownExpired = findings.filter((f) => f.own && f.own.status === "expired");
+  const ownWatching = findings.filter((f) => f.own && f.own.status === "watching");
+  const ownUnresolved = findings.filter((f) => f.own && f.own.status === "unresolved");
   const days = (a, b) => Math.floor((Date.parse(a) - Date.parse(b)) / 86400000);
   for (const f of datedExpired) f.date.days_overdue = days(todayISO, f.dated);
   for (const f of datedUpcoming) f.date.days_until = days(f.dated, todayISO);
@@ -851,12 +922,17 @@ async function main() {
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
       issues_resolved: issuesResolved, issues_unchecked: uncheckedUrls.length,
       oracle_status: oracleStatus, oracle_note: oracleNote,
-      expired_reasons: issuesResolved === 0 && floorExpired.length === 0 && referenced > 0
+      // 0.1.11's contract stands: null still means "we could not check". A floor verdict
+      // needs no network, so once one exists the count is knowable and stops being null.
+      expired_reasons: issuesResolved === 0 && floorExpired.length === 0
         ? null : (issuesResolved === 0 ? 0 : expired.length) + floorExpired.length,
       expired_by_issue: issuesResolved === 0 ? null : expired.length,
       expired_by_version_floor: floorExpired.length,
       version_floor_watching: floorWatching.length,
       version_floor_unresolved: floorUnresolved.length,
+      expired_by_own_version: ownExpired.length,
+      own_version_watching: ownWatching.length,
+      own_version_unresolved: ownUnresolved.length,
       closed_unfixed: issuesResolved === 0 ? null : closedUnfixed.length,
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       dated_unresolved: datedUnresolved.length,
@@ -894,6 +970,17 @@ async function main() {
       console.log(`  ${yellow(f.file + ":" + f.line)}`);
       console.log(`    ${dim(f.text)}`);
       console.log(`    ${red("↳ dated " + f.dated + " — " + daysLate + " days past")}`);
+    }
+    console.log("");
+  }
+
+  if (ownExpired.length > 0) {
+    console.log(`  ${redBold("EXPIRED BY THE RELEASE THEY NAMED")} ${dim("— this project is already at or past it:")}`);
+    for (const f of ownExpired) {
+      console.log("");
+      console.log(`  ${yellow(f.file + ":" + f.line)}`);
+      console.log(`    ${dim(f.text)}`);
+      console.log(`    ${red("\u21b3 names " + f.own.target + "; this project is at " + f.own.own_version + " (" + f.own.manifest + ")")}`);
     }
     console.log("");
   }
@@ -942,7 +1029,7 @@ async function main() {
 
   const rest = findings.filter(
     (f) => !expired.includes(f) && !datedExpired.includes(f) && !closedUnfixed.includes(f)
-      && !floorExpired.includes(f)
+      && !floorExpired.includes(f) && !ownExpired.includes(f)
   );
   if (rest.length > 0) {
     const show = showAll ? rest : rest.slice(0, 10);
@@ -965,6 +1052,10 @@ async function main() {
   }
   if (datedUpcoming.length > 0) {
     console.log(dim(`  ${datedUpcoming.length} dated TODO(s) not due yet — watcher material.`));
+  }
+  if (ownWatching.length > 0) {
+    const n = ownWatching.length;
+    console.log(dim(`  ${n} note${n === 1 ? "" : "s"} name${n === 1 ? "s" : ""} a release this project has not reached yet — watcher material.`));
   }
   if (floorWatching.length > 0) {
     const n = floorWatching.length;
