@@ -1,0 +1,6 @@
+lockfileVersion: '9.0'
+
+packages:
+
+  vite@6.4.3:
+    resolution: {integrity: sha512-stub}

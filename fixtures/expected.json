@@ -1,5 +1,5 @@
 {
-  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here. js_markers.js:19-22 are the 0.1.11 removal-intent shapes, one per shape, and :23 is the negative case that must stay unreported; mts_markers.mts proves .mts is read as TypeScript. `addresses` pins the 0.1.10 note classification for the same lines: the kind of address the note carries, or null for unaddressed. prose_dates.js pins the 0.1.12 deadline rules: :2/:4/:6 are deadlines (prose, quarter, month-year), :8 is year-less — null here and dated only under `expected_with_resolver` — and :10-:20 are the negatives (authored date, copyright, `as of`, a date with no removal intent, a TTL with no date, a year-less authored date). :22 is a quoted example and must not be reported at all. floor_project/ and floor_watching/ are two tiny projects that pin the dependency-floor oracle: the same claim (\"fixed in vite 5.1\") is expired under a ^6.4.0 floor and only watcher material under ^5.0.0, a scoped package resolves the same way, and a package no manifest declares stays unresolved rather than clean. `expected_floor` pins the verdict for each. own_version/ and own_version_watching/ pin the release-target verdict: the same \"Remove from `core-js@4`\" is expired at 22.4.1 and watcher material at 3.50.0, the v0.1.11 shapes (\"Remove in v18.\", \"TODO(v11): remove\") gain the same verdict, and markers.js:7/:9/:11 are the list operations (\"remove from the array\", \"remove from displays\") that must never be markers. js_markers.js:21/:22 sit under no manifest at all and stay unresolved.",
+  "_comment": "Every line a scan of fixtures/ must report, and the expiry date it must read. Anything not listed here must NOT be reported, and anything listed that goes unreported fails too. Line numbers are 1-based; update them when you edit a fixture. The last four lines of each language fixture are the quoted-example cases: only the one whose marker sits outside the quotes is listed here. js_markers.js:19-22 are the 0.1.11 removal-intent shapes, one per shape, and :23 is the negative case that must stay unreported; mts_markers.mts proves .mts is read as TypeScript. `addresses` pins the 0.1.10 note classification for the same lines: the kind of address the note carries, or null for unaddressed. prose_dates.js pins the 0.1.12 deadline rules: :2/:4/:6 are deadlines (prose, quarter, month-year), :8 is year-less — null here and dated only under `expected_with_resolver` — and :10-:20 are the negatives (authored date, copyright, `as of`, a date with no removal intent, a TTL with no date, a year-less authored date). :22 is a quoted example and must not be reported at all. floor_project/ and floor_watching/ are two tiny projects that pin the dependency-floor oracle: the same claim (\"fixed in vite 5.1\") is expired under a ^6.4.0 floor and only watcher material under ^5.0.0, a scoped package resolves the same way, and a package no manifest declares stays unresolved rather than clean. `expected_floor` pins the verdict for each. own_version/ and own_version_watching/ pin the release-target verdict: the same \"Remove from `core-js@4`\" is expired at 22.4.1 and watcher material at 3.50.0, the v0.1.11 shapes (\"Remove in v18.\", \"TODO(v11): remove\") gain the same verdict, and markers.js:7/:9/:11 are the list operations (\"remove from the array\", \"remove from displays\") that must never be markers. js_markers.js:21/:22 sit under no manifest at all and stay unresolved. The 0.1.13 fixture dirs (A_/B_/C_/D_/E_/F_/I_) are the precision-first spec's own acceptance cases. Each reproduces one measured bug from the 17 Sep JS/TS hunt in under 40 lines; the pins move as each issue lands, and I_negatives must stay at zero forever — it is the evidence that comment-context earns its keep.",
   "expected": {
     "js_markers.js:2": null,
     "js_markers.js:4": "2025-01-01",
@@ -53,7 +53,29 @@
     "own_version/src/markers.js:1": null,
     "own_version/src/markers.js:3": null,
     "own_version/src/markers.js:5": null,
-    "own_version_watching/src/data.mjs:1": null
+    "own_version_watching/src/data.mjs:1": null,
+    "B_generated_header/handwritten.ts:1": null,
+    "B_generated_header/sdk.ts:4": null,
+    "B_generated_header/sdk.ts:6": null,
+    "C_dedupe_deprecated/api.ts:1": null,
+    "C_dedupe_deprecated/api.ts:3": null,
+    "C_dedupe_deprecated/api.ts:5": null,
+    "C_dedupe_deprecated/api.ts:7": null,
+    "D_vendored_provenance/src/jsonSchemaFaker.js:9": null,
+    "D_vendored_provenance/src/jsonSchemaFaker.js:13": null,
+    "E_active_voice/shapes.ts:17": null,
+    "F_external_address/tickets.ts:1": null,
+    "F_external_address/tickets.ts:3": null,
+    "F_external_address/tickets.ts:5": null,
+    "F_external_address/tickets.ts:7": null,
+    "F_external_address/tickets.ts:9": null,
+    "E_active_voice/shapes.ts:3": null,
+    "E_active_voice/shapes.ts:5": null,
+    "E_active_voice/shapes.ts:7": null,
+    "E_active_voice/shapes.ts:9": null,
+    "E_active_voice/shapes.ts:11": null,
+    "E_active_voice/shapes.ts:13": null,
+    "E_active_voice/shapes.ts:15": null
   },
   "addresses": {
     "address_refs.py:6": "self",
@@ -108,7 +130,29 @@
     "own_version/src/markers.js:1": null,
     "own_version/src/markers.js:3": null,
     "own_version/src/markers.js:5": null,
-    "own_version_watching/src/data.mjs:1": null
+    "own_version_watching/src/data.mjs:1": null,
+    "B_generated_header/handwritten.ts:1": null,
+    "B_generated_header/sdk.ts:4": null,
+    "B_generated_header/sdk.ts:6": null,
+    "C_dedupe_deprecated/api.ts:1": null,
+    "C_dedupe_deprecated/api.ts:3": null,
+    "C_dedupe_deprecated/api.ts:5": null,
+    "C_dedupe_deprecated/api.ts:7": null,
+    "D_vendored_provenance/src/jsonSchemaFaker.js:9": null,
+    "D_vendored_provenance/src/jsonSchemaFaker.js:13": null,
+    "E_active_voice/shapes.ts:17": null,
+    "F_external_address/tickets.ts:1": null,
+    "F_external_address/tickets.ts:3": null,
+    "F_external_address/tickets.ts:5": null,
+    "F_external_address/tickets.ts:7": null,
+    "F_external_address/tickets.ts:9": null,
+    "E_active_voice/shapes.ts:3": null,
+    "E_active_voice/shapes.ts:5": null,
+    "E_active_voice/shapes.ts:7": null,
+    "E_active_voice/shapes.ts:9": null,
+    "E_active_voice/shapes.ts:11": null,
+    "E_active_voice/shapes.ts:13": null,
+    "E_active_voice/shapes.ts:15": null
   },
   "dated_unresolved_without_resolver": 1,
   "fake_history": {
@@ -132,6 +176,8 @@
     "own_version/src/markers.js:1": "expired",
     "own_version/src/markers.js:3": "expired",
     "own_version/src/markers.js:5": "expired",
-    "own_version_watching/src/data.mjs:1": "watching"
+    "own_version_watching/src/data.mjs:1": "watching",
+    "D_vendored_provenance/src/jsonSchemaFaker.js:9": "unresolved",
+    "D_vendored_provenance/src/jsonSchemaFaker.js:13": "unresolved"
   }
 }

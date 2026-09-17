@@ -42,7 +42,26 @@ const MARKER = new RegExp(
 // too — only trust them inside comments.
 const MARKER_REMOVAL = new RegExp(
   [
-    "(?:remove|delete)\\s+(?:this|once|when|after)\\b",
+    // the condition is right there in the words
+    "(?:remove|delete)\\s+(?:once|when|after)\\b",
+    // "remove this" is not enough on its own. "Remove this line not to show stack trace"
+    // describes what the code does; "remove this when the parser lands" is a promise.
+    // So it needs a tag in front of it or a condition behind it — nothing else counts.
+    "\\b(?:TODO|FIXME|HACK|XXX)\\b[^.;]{0,24}?(?:remove|delete)\\s+this\\b",
+    "(?:remove|delete)\\s+this\\b[^.;]{0,40}?\\b(?:when|once|after|if|unless|until)\\b",
+    // 0.1.13, the active voice: a tag plus a bare "remove". This is the shape that made
+    // drizzle-orm report 0 markers across 270k lines while grep found 17 of them —
+    // "// TODO: remove", "// TODO: remove?", "// TODO: Seems not used. Remove."
+    // The tag is the guard: "remove" alone is an ordinary English verb in UI copy.
+    // ...but never "remove from": that phrase belongs to the release-target shape below,
+    // which requires a version-like target, because "remove from the array" and
+    // "remove from displays" are what the code does to a list.
+    "\\b(?:TODO|FIXME|HACK|XXX)\\b.{0,40}?\\bremove\\b(?!\\s+from\\b)",
+    // objects that carry the intent without needing a tag
+    "\\bremove\\s+in\\s+(?:the\\s+)?future(?:\\s+versions?)?\\b",
+    "\\bremove\\s+as\\s+part\\s+of\\b",
+    "\\bremove\\s+and\\s+use\\b[^.;]{0,40}?\\binstead\\b",
+    "\\bremove\\s+sometime\\b",
     "(?:can|should|will)\\s+be\\s+(?:removed|deleted)\\s+(?:when|once|after|in|by)",
     // "we can use structuredClone once we drop Node 16" — the clause after once/after
     // must name a party or a thing. Without that guard the shape swallows instructions
@@ -544,6 +563,7 @@ function scan(root, opts = {}) {
       const lang = LANG.get(path.extname(e.name));
       loc += lines.length; files += 1;
       progress();
+      const provenance = vendoredProvenance(lang, lines, path.relative(root, p));
       let state = INITIAL_STATE[lang];
       for (let i = 0; i < lines.length; i++) {
         // must run before the length skip below, or a long line loses the block state
@@ -592,6 +612,14 @@ function scan(root, opts = {}) {
             status: !mine ? "unresolved" : cmpVer(mine.version, target.target) >= 0 ? "expired" : "watching"
           };
         }
+        // a version verdict inside somebody else's code is not a verdict about this project
+        if (provenance) {
+          for (const v of [floor, own]) {
+            if (!v) continue;
+            v.status = "unresolved";
+            v.reason = `vendored_provenance:${provenance}`;
+          }
+        }
         findings.push({
           file: rel, line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
@@ -603,6 +631,41 @@ function scan(root, opts = {}) {
   }
   if (process.stderr.isTTY) process.stderr.write("\r" + " ".repeat(60) + "\r");
   return { loc, files, findings, skipped };
+}
+
+// ---------- provenance: whose code is this anyway ----------
+// A version verdict only means something when the version it is compared against belongs
+// to the same project. novu's bundled copy of json-schema-faker carries `// TODO: remove
+// in v2` inside a vendored copy of the `yaml` package; matched against @novu/framework
+// 2.13.2 it read as expired, and the "v2" meant yaml@2, which shipped in 2021. Both of
+// the only two expired verdicts the CLI produced across 1.34M lines were that file.
+//
+// So: if a file shows provenance from somewhere else, a version verdict is unresolved.
+// Not expired, not watching — we do not know whose version the note is talking about.
+const VENDOR_PATH = /(^|\/)(vendor|vendored|third_party|thirdparty|external)(\/|$)|(^|\/)public\/js(\/|$)|(^|\/)\.yarn\/releases(\/|$)/i;
+const COPIED_FROM = /(copied|vendored|inlined|bundled)\s+(the\s+)?(code\s+)?from/i;
+const ARTIFACT_URL = /unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|registry\.npmjs\.org|\/releases\/download\//i;
+const GENERATED_HEADER = /code\s+generated\s+by\b.*\bdo\s+not\s+edit/i;
+const GENERATED_TAG = /@generated\b/;
+const PROVENANCE_LINES = 20;
+
+// The provenance signal a file carries, or null. Only the first 20 lines are read, and
+// only inside comment spans: a file that merely mentions unpkg somewhere in its code is
+// not vendored, and neither is one that builds a CDN URL at runtime.
+function vendoredProvenance(lang, lines, file) {
+  if (VENDOR_PATH.test(file)) return "vendored_path";
+  let state = INITIAL_STATE[lang];
+  const upto = Math.min(PROVENANCE_LINES, lines.length);
+  for (let i = 0; i < upto; i++) {
+    const cs = commentSpans(lang, lines[i], state);
+    state = cs.state;
+    if (cs.spans.length === 0) continue;
+    const text = cs.spans.map(([a, b]) => lines[i].slice(a, b)).join(" ");
+    if (COPIED_FROM.test(text)) return "copied_from";
+    if (ARTIFACT_URL.test(text)) return "copied_from_url";
+    if (GENERATED_HEADER.test(text) || GENERATED_TAG.test(text)) return "generated";
+  }
+  return null;
 }
 
 // ---------- tier 3: the dependency floor ----------
