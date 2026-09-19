@@ -556,7 +556,8 @@ function scan(root, opts = {}) {
   const floorCache = new Map();
   const lockCache = new Map();
   const ownCache = new Map();
-  let loc = 0, files = 0;
+  let loc = 0, files = 0, skippedGenerated = 0;
+  const generatedDirs = new Set();
   const skipped = [];
   const findings = [];
   const stack = [root];
@@ -587,6 +588,14 @@ function scan(root, opts = {}) {
       try { text = fs.readFileSync(p, "utf8"); } catch { continue; }
       const lines = text.split("\n");
       const lang = LANG.get(path.extname(e.name));
+      // A generated file is skipped whole, and said out loud. It is not scanned, not
+      // counted in files or lines, and its notes are not anybody's to act on.
+      if (isGeneratedFile(lang, lines)) {
+        skippedGenerated += 1;
+        const dir = path.dirname(path.relative(root, p));
+        if (!generatedDirs.has(dir)) generatedDirs.add(dir);
+        continue;
+      }
       loc += lines.length; files += 1;
       progress();
       const rel0 = path.relative(root, p);
@@ -668,6 +677,7 @@ function scan(root, opts = {}) {
         findings.push({
           file: rel, line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
+          kind: DEPRECATED_TAG.test(lines[i]) ? "deprecation_notice" : "workaround",
           dated: date && date.kind === "dated" ? date.parsed : null, date, floor, own,
           address: addrKind, verifiable: addressVerifiable(addrKind)
         });
@@ -734,6 +744,7 @@ function scan(root, opts = {}) {
           text: lines[n.line].trim().slice(0, 160),
           named: n.name, reason_span: n.span,
           issues, trac: [...reasonText.matchAll(TRAC_URL)].map((m) => m[0]),
+          kind: DEPRECATED_TAG.test(reasonText) ? "deprecation_notice" : "workaround",
           dated: date && date.kind === "dated" ? date.parsed : null, date, floor, own,
           address: namedAddr, verifiable: addressVerifiable(namedAddr)
         });
@@ -741,8 +752,21 @@ function scan(root, opts = {}) {
     }
   }
   if (process.stderr.isTTY) process.stderr.write("\r" + " ".repeat(60) + "\r");
-  return { loc, files, findings, skipped };
+  return { loc, files, findings, skipped, skippedGenerated, generatedDirs: [...generatedDirs] };
 }
+
+// ---------- deprecation notices are not workarounds ----------
+// A deprecation notice is intentional, scheduled and announced. A self-admitted
+// workaround is an accident somebody owned up to. Counting them together is a category
+// error in the product's core claim: 42 of novu's 101 findings carried @deprecated, and
+// two machine-written sentences accounted for 37 of them.
+const DEPRECATED_TAG = /@deprecated\b/i;
+
+// Reason texts are compared after trimming, collapsing whitespace and case-folding, so a
+// generator that writes the same sentence two hundred times counts once. Density is a
+// measure of how honestly a team writes things down; the same sentence repeated by a
+// codemod is one decision, not two hundred.
+const normaliseReason = (t) => t.trim().replace(/\s+/g, " ").toLowerCase();
 
 // ---------- named workarounds ----------
 // Our strongest rule is that a marker must sit in a comment. It is also what blinded us
@@ -801,6 +825,28 @@ const ARTIFACT_URL = /unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|regis
 const GENERATED_HEADER = /code\s+generated\s+by\b.*\bdo\s+not\s+edit/i;
 const GENERATED_TAG = /@generated\b/;
 const PROVENANCE_LINES = 20;
+
+// A file whose header says a generator owns it. Narrower than the provenance scan above
+// on purpose: the first five lines, because that is where a generator writes its banner,
+// and because skipping a file outright is a bigger claim than refusing a verdict in it.
+//
+// 38 of novu's 101 findings (37.6%) came from libs/internal-sdk/, a Speakeasy-generated
+// client. Nobody will ever act on those notes — they are rewritten verbatim on the next
+// SDK refresh — and counting them inflates the repository's density with rows that cannot
+// be worked.
+const GENERATED_LINES = 5;
+function isGeneratedFile(lang, lines) {
+  let state = INITIAL_STATE[lang];
+  const upto = Math.min(GENERATED_LINES, lines.length);
+  for (let i = 0; i < upto; i++) {
+    const cs = commentSpans(lang, lines[i], state);
+    state = cs.state;
+    if (cs.spans.length === 0) continue;
+    const text = cs.spans.map(([a, b]) => lines[i].slice(a, b)).join(" ");
+    if (GENERATED_HEADER.test(text) || GENERATED_TAG.test(text)) return true;
+  }
+  return false;
+}
 
 // The provenance signal a file carries, or null. Only the first 20 lines are read, and
 // only inside comment spans: a file that merely mentions unpkg somewhere in its code is
@@ -1071,7 +1117,8 @@ async function main() {
   }
 
   const t0 = Date.now();
-  const { loc, files, findings, skipped } = scan(root, { dateLine: gitDateLine(root) });
+  const { loc, files, findings, skipped, skippedGenerated, generatedDirs } =
+    scan(root, { dateLine: gitDateLine(root) });
 
   if (files === 0) {
     console.log("  No JS/TS/PHP/Python source files found here. Run inside a repository.");
@@ -1109,8 +1156,12 @@ async function main() {
   const closedUnfixed = findings.filter(
     (f) => !expired.includes(f) && f.issues.some((i) => closedWithoutFix(resolved[i.url]))
   );
-  const investigable = findings.filter((f) => f.address !== null);
-  const unaddressed = findings.filter((f) => f.address === null);
+  // the workaround count is the product's claim; deprecation notices are their own bucket
+  const workarounds = findings.filter((f) => f.kind !== "deprecation_notice");
+  const deprecations = findings.filter((f) => f.kind === "deprecation_notice");
+  const uniqueReasons = new Set(workarounds.map((f) => normaliseReason(f.text))).size;
+  const investigable = workarounds.filter((f) => f.address !== null);
+  const unaddressed = workarounds.filter((f) => f.address === null);
   const todayISO = new Date().toISOString().slice(0, 10);
   const datedExpired = findings.filter((f) => f.dated && f.dated < todayISO && !expired.includes(f));
   const datedUpcoming = findings.filter((f) => f.dated && f.dated >= todayISO);
@@ -1130,11 +1181,12 @@ async function main() {
     console.log(dim("  and had to be downloaded first. Re-running will be much faster."));
     console.log("");
   }
-  const density = loc ? (findings.length / loc * 10000) : 0;
+  const density = loc ? (uniqueReasons / loc * 10000) : 0;
 
   if (json) {
     const tracRefs = [...new Set(findings.flatMap((f) => f.trac || []))];
-    console.log(JSON.stringify({ version: VERSION, root, files, loc, markers: findings.length,
+    console.log(JSON.stringify({ version: VERSION, root, files, loc, markers: workarounds.length,
+      markers_unique: uniqueReasons, deprecation_notices: deprecations.length,
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
       issues_resolved: issuesResolved, issues_unchecked: uncheckedUrls.length,
       oracle_status: oracleStatus, oracle_note: oracleNote,
@@ -1153,6 +1205,7 @@ async function main() {
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       dated_unresolved: datedUnresolved.length,
       trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
+      skipped_generated: skippedGenerated, generated_dirs: generatedDirs,
       notes: { investigable: investigable.length, unaddressed: unaddressed.length },
       findings, issues: resolved }, null, 2));
     return;
@@ -1160,7 +1213,11 @@ async function main() {
 
   console.log(`  ${bold(String(files).padStart(7))}  files scanned ${dim("(" + secs + "s)")}`);
   console.log(`  ${bold(loc.toLocaleString().padStart(7))}  lines of code`);
-  console.log(`  ${bold(String(findings.length).padStart(7))}  self-admitted workarounds ${dim("(" + density.toFixed(2) + " per 10k LOC)")}`);
+  const uniqueNote = uniqueReasons === workarounds.length ? "" : " (" + uniqueReasons + " unique)";
+  console.log(`  ${bold(String(workarounds.length).padStart(7))}  self-admitted workarounds${uniqueNote} ${dim("(" + density.toFixed(2) + " per 10k LOC)")}`);
+  if (deprecations.length > 0) {
+    console.log(`  ${bold(String(deprecations.length).padStart(7))}  deprecation notices ${dim("— announced and scheduled, counted apart")}`);
+  }
   if (expired.length > 0) {
     console.log(`  ${redBold(String(expired.length).padStart(7))}  ${redBold("with EXPIRED reasons")} ${dim("— the issue they cite was closed as fixed")}`);
   }
@@ -1261,6 +1318,11 @@ async function main() {
   if (uncheckedUrls.length > 0) {
     console.log(dim(`  ${uncheckedUrls.length} referenced issue(s) not checked (rate limit / network). Set GITHUB_TOKEN to check all.`));
   }
+  if (skippedGenerated > 0) {
+    const shown = generatedDirs.slice(0, 3).join(", ");
+    console.log(dim(`  ${skippedGenerated} generated file(s) skipped (${shown}${generatedDirs.length > 3 ? ", …" : ""}).`));
+    console.log(dim("  Their header says a generator owns them, so their notes are rewritten, not acted on."));
+  }
   if (skipped.length > 0) {
     const shown = skipped.slice(0, 3).join(", ");
     console.log(dim(`  ${skipped.length} build-output director${skipped.length === 1 ? "y" : "ies"} skipped (${shown}${skipped.length > 3 ? ", …" : ""}).`));
@@ -1294,7 +1356,7 @@ async function main() {
   if (tracSet.size > 0) {
     console.log(dim(`  ${tracSet.size} WordPress trac ticket(s) referenced — status check coming in the WP edition.`));
   }
-  if (findings.length === 0) {
+  if (workarounds.length === 0) {
     console.log("  0 self-admitted workarounds. Either you're clean — or your debt is the");
     console.log("  silent kind: the workarounds nobody wrote a comment for.");
     console.log("");

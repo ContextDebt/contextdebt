@@ -55,8 +55,6 @@
     "own_version/src/markers.js:5": null,
     "own_version_watching/src/data.mjs:1": null,
     "B_generated_header/handwritten.ts:1": null,
-    "B_generated_header/sdk.ts:4": null,
-    "B_generated_header/sdk.ts:6": null,
     "C_dedupe_deprecated/api.ts:1": null,
     "C_dedupe_deprecated/api.ts:3": null,
     "C_dedupe_deprecated/api.ts:5": null,
@@ -133,8 +131,6 @@
     "own_version/src/markers.js:5": null,
     "own_version_watching/src/data.mjs:1": null,
     "B_generated_header/handwritten.ts:1": null,
-    "B_generated_header/sdk.ts:4": null,
-    "B_generated_header/sdk.ts:6": null,
     "C_dedupe_deprecated/api.ts:1": null,
     "C_dedupe_deprecated/api.ts:3": null,
     "C_dedupe_deprecated/api.ts:5": null,
@@ -181,5 +177,7 @@
     "own_version_watching/src/data.mjs:1": "watching",
     "D_vendored_provenance/src/jsonSchemaFaker.js:9": "unresolved",
     "D_vendored_provenance/src/jsonSchemaFaker.js:13": "unresolved"
-  }
+  },
+  "skipped_generated": 1,
+  "deprecation_notices": 3
 }
