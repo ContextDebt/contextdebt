@@ -563,14 +563,32 @@ function scan(root, opts = {}) {
       const lang = LANG.get(path.extname(e.name));
       loc += lines.length; files += 1;
       progress();
-      const provenance = vendoredProvenance(lang, lines, path.relative(root, p));
-      let state = INITIAL_STATE[lang];
+      const rel0 = path.relative(root, p);
+      const provenance = vendoredProvenance(lang, lines, rel0);
+      // One pass for the comment spans of every line, in order — the block state has to
+      // carry, and a declaration needs to read the lines above it.
+      const spansByLine = [];
+      {
+        let st = INITIAL_STATE[lang];
+        for (let i = 0; i < lines.length; i++) {
+          const cs = commentSpans(lang, lines[i], st);
+          st = cs.state;
+          spansByLine.push(cs.spans);
+        }
+      }
+      const named = [];
       for (let i = 0; i < lines.length; i++) {
-        // must run before the length skip below, or a long line loses the block state
-        const cs = commentSpans(lang, lines[i], state);
-        state = cs.state;
+        const cs = { spans: spansByLine[i] };
         if (lines[i].length > 500) continue; // minified/bundled line — not a human comment
-        if (markerIndex(lines[i], cs.spans) === -1) continue;
+        if (markerIndex(lines[i], cs.spans) === -1) {
+          // not a marker by its words — but the name may confess instead
+          const name = confessingName(lines[i]);
+          if (name && !isCommentOnly(lines[i], cs.spans)) {
+            const span = reasonSpan(lines, spansByLine, i);
+            if (span) named.push({ line: i, span, name });
+          }
+          continue;
+        }
         if (/(cannot|can\x27t|don\x27t|do not|won\x27t|shouldn\x27t|must not|never)\s+(be\s+)?(remove|delete)/i.test(lines[i])) continue;
         const ctx = lines.slice(Math.max(0, i - 2), i + 2).join("\n");
         const issues = [...ctx.matchAll(ISSUE_URL)].map((m) => ({
@@ -627,10 +645,117 @@ function scan(root, opts = {}) {
           address: addressOf(stripQuoted(lines[i]), addrCtx)
         });
       }
+      // Named workarounds, after the word-based pass, so a reason block that already
+      // reported a marker of its own is not counted twice.
+      const reported = new Set(findings.filter((f) => f.file === rel0).map((f) => f.line));
+      for (const n of named) {
+        let clash = false;
+        for (let k = n.span.from; k <= n.span.to; k++) if (reported.has(k)) clash = true;
+        if (clash) continue;
+        const reason = lines.slice(n.span.from - 1, n.span.to);
+        const reasonText = reason.join("\n");
+        if (/(cannot|can\x27t|don\x27t|do not|won\x27t|shouldn\x27t|must not|never)\s+(be\s+)?(remove|delete)/i.test(reasonText)) continue;
+        // the reason block is what gets read — the declaration line only names the finding
+        let date = null;
+        for (let k = n.span.from - 1; k < n.span.to && !date; k++) {
+          date = expiryDate(lines, k, { file: rel0, dateLine });
+        }
+        let floor = null, own = null;
+        for (const rl of reason) {
+          if (!floor) {
+            const claim = versionClaim(rl);
+            if (claim) {
+              const found = manifestFloor(root, rel0, claim.pkg, floorCache);
+              const lock = lockfileVersion(root, claim.pkg, lockCache);
+              floor = {
+                kind: "version_floor", pkg: claim.pkg, fixed_in: claim.fixed_in,
+                floor: found ? found.floor : null, source: found ? found.source : null,
+                declared: found ? found.range : null, manifest: found ? found.manifest : null,
+                status: !found || found.floor === null ? "unresolved"
+                  : cmpVer(found.floor, claim.fixed_in) >= 0 ? "expired" : "watching"
+              };
+              if (lock) floor.lockfile_version = lock;
+            }
+          }
+          if (!own) {
+            const t = ownVersionTarget(rl);
+            if (t) {
+              const mine = ownVersion(root, rel0, ownCache);
+              own = {
+                kind: "own_version", target: t.pkg ? `${t.pkg}@${t.target}` : `v${t.target}`,
+                pkg: t.pkg, version: t.target,
+                own_version: mine ? mine.version : null, manifest: mine ? mine.manifest : null,
+                status: !mine ? "unresolved" : cmpVer(mine.version, t.target) >= 0 ? "expired" : "watching"
+              };
+            }
+          }
+        }
+        if (provenance) {
+          for (const v of [floor, own]) {
+            if (!v) continue;
+            v.status = "unresolved";
+            v.reason = `vendored_provenance:${provenance}`;
+          }
+        }
+        const bare = reason.map(stripQuoted).join("\n");
+        const issues = [...reasonText.matchAll(ISSUE_URL)].map((m) => ({
+          url: m[0], owner: m[1], repo: m[2], num: m[4]
+        }));
+        findings.push({
+          file: rel0, line: n.line + 1,
+          text: lines[n.line].trim().slice(0, 160),
+          named: n.name, reason_span: n.span,
+          issues, trac: [...reasonText.matchAll(TRAC_URL)].map((m) => m[0]),
+          dated: date && date.kind === "dated" ? date.parsed : null, date, floor, own,
+          address: addressOf(bare, bare)
+        });
+      }
     }
   }
   if (process.stderr.isTTY) process.stderr.write("\r" + " ".repeat(60) + "\r");
   return { loc, files, findings, skipped };
+}
+
+// ---------- named workarounds ----------
+// Our strongest rule is that a marker must sit in a comment. It is also what blinded us
+// to the best note found in 1.34M lines: novu's `const esbuildDestructuringWorkaround`,
+// whose comment block states the reason, the exact version that kills it, and an upstream
+// issue — but contains no marker word at all. The confession was in the identifier.
+//
+// So a declaration whose NAME confesses counts too, and only then: the adjacent comment
+// block is the reason, and without one there is nothing to read. `const hackyFix = {}`
+// with no explanation is a style smell, not a self-admitted workaround, and `removeTodo`
+// is a function doing its job.
+const DECL_NAME = /\b(?:const|let|var|function|class|type|interface)\s+([A-Za-z_$][\w$]*)/;
+const PROP_NAME = /^\s*([A-Za-z_$][\w$]*)\s*:\s*[{[(]/;
+const CONFESSING_NAME = /(?:workaround|hack|hotfix|shim|polyfill|patch)$/i;
+const CONFESSING_PREFIX = /^(?:workaround|hack|hotfix)/i;
+
+function confessingName(line) {
+  const m = DECL_NAME.exec(line) || PROP_NAME.exec(line);
+  if (!m) return null;
+  const name = m[1];
+  return CONFESSING_NAME.test(name) || CONFESSING_PREFIX.test(name) ? name : null;
+}
+
+// A line holding nothing but a comment: blank it out and only the comment's own
+// punctuation is left. Works the same in every language we read.
+function isCommentOnly(line, spans) {
+  if (!spans || spans.length === 0) return false;
+  let out = line;
+  for (const [a, b] of spans) out = out.slice(0, a) + " ".repeat(b - a) + out.slice(b);
+  return out.replace(/[/*#\s-]/g, "") === "";
+}
+
+// The comment attached to a declaration: the run of comment-only lines directly above
+// it, or a trailing comment on the line itself. 1-based, inclusive. Null when there is
+// no comment, which is the guard that keeps this rule honest.
+function reasonSpan(lines, spansByLine, i) {
+  let top = i;
+  while (top - 1 >= 0 && isCommentOnly(lines[top - 1], spansByLine[top - 1])) top -= 1;
+  if (top < i) return { from: top + 1, to: i };
+  if (spansByLine[i] && spansByLine[i].length > 0) return { from: i + 1, to: i + 1 };
+  return null;
 }
 
 // ---------- provenance: whose code is this anyway ----------

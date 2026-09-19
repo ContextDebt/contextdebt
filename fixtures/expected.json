@@ -75,7 +75,8 @@
     "E_active_voice/shapes.ts:9": null,
     "E_active_voice/shapes.ts:11": null,
     "E_active_voice/shapes.ts:13": null,
-    "E_active_voice/shapes.ts:15": null
+    "E_active_voice/shapes.ts:15": null,
+    "A_named_identifier/vite.config.ts:7": null
   },
   "addresses": {
     "address_refs.py:6": "self",
@@ -152,7 +153,8 @@
     "E_active_voice/shapes.ts:9": null,
     "E_active_voice/shapes.ts:11": null,
     "E_active_voice/shapes.ts:13": null,
-    "E_active_voice/shapes.ts:15": null
+    "E_active_voice/shapes.ts:15": null,
+    "A_named_identifier/vite.config.ts:7": "url"
   },
   "dated_unresolved_without_resolver": 1,
   "fake_history": {
