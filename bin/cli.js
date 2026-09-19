@@ -1113,6 +1113,84 @@ function closedWithoutFix(r) {
   return !!r && r.state === "closed" && !reasonResolved(r);
 }
 
+// ---------- tier 2b: the oracle without an API ----------
+// api.github.com answers 403 from shared and datacenter IPs, and so does the web front
+// end, while `git clone` answers 200. So when the API is out of reach, git alone can still
+// produce evidence: whether any commit in the upstream repository claims the issue this
+// comment cites, and which release carries that commit.
+//
+// What it must never do is say open or closed. "No commit mentions #233" is evidence that
+// nobody claimed a fix — not evidence that the issue is open, and not a verdict about
+// anything. L2, never L3. That distinction is the whole reason this is allowed to exist.
+const PROBE_BUDGET = 5;        // upstream repositories per scan
+const PROBE_TIMEOUT = 60000;   // per git call
+
+// Turn the three git answers into one result. Pure, so it can be checked without a network.
+function readProbe({ cloned, commit, tag, prRef }) {
+  if (!cloned) return { probe: "upstream_unreachable", reason: "clone failed" };
+  if (commit && commit.sha) {
+    return {
+      probe: "fix_claimed_in",
+      sha: commit.sha,
+      date: commit.date || null,
+      tag: tag || null,
+      note: tag
+        ? `a commit claiming this issue is contained in ${tag}`
+        : "a commit claims this issue, but no release contains it yet"
+    };
+  }
+  return {
+    probe: "no_commit_references_issue",
+    pull_request_ref: !!prRef,
+    note: "no commit in the upstream history claims this issue — that is the absence of a claim, not evidence the issue is open"
+  };
+}
+
+// Ask git, and only git. Returns a function that probes one reference, or null when the
+// probe is not enabled.
+function upstreamProber(enabled) {
+  if (!enabled) return null;
+  const { execFileSync } = require("node:child_process");
+  const os = require("node:os");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "contextdebt-probe-"));
+  const clones = new Map();
+  let spent = 0;
+  const git = (args, cwd) => execFileSync("git", args, {
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: PROBE_TIMEOUT
+  }).trim();
+
+  const probe = (owner, repo, num) => {
+    const key = `${owner}/${repo}`;
+    if (!clones.has(key)) {
+      if (spent >= PROBE_BUDGET) return { probe: "upstream_unreachable", reason: "probe budget spent" };
+      spent += 1;
+      const dir = path.join(base, `${owner}-${repo}`);
+      try {
+        git(["clone", "--filter=blob:none", "--no-checkout", "--quiet",
+             `https://github.com/${owner}/${repo}.git`, dir]);
+        clones.set(key, dir);
+      } catch {
+        clones.set(key, null);
+      }
+    }
+    const dir = clones.get(key);
+    if (!dir) return readProbe({ cloned: false });
+    let commit = null, tag = null, prRef = false;
+    try {
+      const out = git(["log", "--all", "-E", `--grep=#${num}([^0-9]|$)`, "--format=%H%x09%cs", "-1"], dir);
+      if (out) { const [sha, date] = out.split("\n")[0].split("\t"); commit = { sha, date }; }
+    } catch { /* no match is not an error we report differently */ }
+    if (commit) {
+      try { tag = (git(["tag", "--contains", commit.sha], dir).split("\n")[0] || "").trim() || null; } catch { tag = null; }
+    } else {
+      try { prRef = git(["ls-remote", "origin", `refs/pull/${num}/head`], dir).length > 0; } catch { prRef = false; }
+    }
+    return readProbe({ cloned: true, commit, tag, prRef });
+  };
+  probe.cleanup = () => { try { fs.rmSync(base, { recursive: true, force: true }); } catch { /* temp dir */ } };
+  return probe;
+}
+
 // ---------- main ----------
 async function main() {
   const args = process.argv.slice(2);
@@ -1121,7 +1199,7 @@ async function main() {
     console.log(`
   ${bold("contextdebt")} v${VERSION} — find the expired code your AI reads every day
 
-  Usage: npx contextdebt [path] [--json] [--all]
+  Usage: npx contextdebt [path] [--json] [--all] [--probe-upstream]
 
   Scans JS/TS/PHP/Python source for self-admitted workarounds ("workaround",
   "until we upgrade", "TODO: remove when ...") and checks whether
@@ -1130,12 +1208,18 @@ async function main() {
   Runs 100% locally — your code never leaves your machine.
   Set GITHUB_TOKEN to raise the issue-lookup rate limit.
 
+  --probe-upstream  For references the API could not answer, ask git instead: does any
+                    commit upstream claim that issue, and which release contains it.
+                    Clones up to 5 upstream repositories without their file contents.
+                    Produces evidence, never a verdict — it never says open or closed.
+
   https://contextdebt.dev
 `);
     return;
   }
   const json = args.includes("--json");
   const showAll = args.includes("--all");
+  const probeUpstream = args.includes("--probe-upstream");
   const root = path.resolve(args.find((a) => !a.startsWith("-")) || ".");
 
   if (!json) {
@@ -1167,6 +1251,19 @@ async function main() {
   // How much of the oracle actually answered. A reference we could not reach tells us
   // nothing, so "0 expired" and "we could not check" must not print as the same number:
   // when nothing resolved, the expired counts are unknown, and unknown is null.
+  // Git-only evidence for the references the API could not answer. Opt-in, because this
+  // clones upstream repositories and a tool that advertises "runs locally" does not start
+  // doing that on its own.
+  const probes = {};
+  if (probeUpstream) {
+    const prober = upstreamProber(true);
+    for (const [url, i] of unique) {
+      if (resolved[url] && resolved[url].state !== null) continue;
+      probes[url] = prober(i.owner, i.repo, i.num);
+    }
+    prober.cleanup();
+  }
+
   const referenced = unique.size;
   const uncheckedUrls = [...unique.keys()].filter((u) => !resolved[u] || resolved[u].state === null);
   const issuesResolved = referenced - uncheckedUrls.length;
@@ -1219,6 +1316,7 @@ async function main() {
       density_per_10k_loc: +density.toFixed(2), issues_checked: Object.keys(resolved).length,
       issues_resolved: issuesResolved, issues_unchecked: uncheckedUrls.length,
       oracle_status: oracleStatus, oracle_note: oracleNote,
+      upstream_probes: probes,
       // 0.1.11's contract stands: null still means "we could not check". A floor verdict
       // needs no network, so once one exists the count is knowable and stops being null.
       expired_reasons: issuesResolved === 0 && floorExpired.length === 0
@@ -1344,8 +1442,28 @@ async function main() {
     console.log("");
   }
 
+  const probed = Object.entries(probes);
+  if (probed.length > 0) {
+    console.log(`  ${bold("ASKED GIT INSTEAD")} ${dim("— evidence from the upstream history, not a verdict:")}`);
+    for (const [url, r] of probed) {
+      console.log("");
+      console.log(`  ${yellow(url)}`);
+      if (r.probe === "fix_claimed_in") {
+        console.log(`    ${dim("↳ " + r.note + " (" + r.sha.slice(0, 10) + (r.date ? " " + r.date : "") + ")")}`);
+      } else if (r.probe === "no_commit_references_issue") {
+        console.log(`    ${dim("↳ " + r.note)}`);
+        console.log(`    ${dim("↳ a pull request ref for it does" + (r.pull_request_ref ? "" : " not") + " exist upstream")}`);
+      } else {
+        console.log(`    ${dim("↳ upstream could not be reached (" + r.reason + ")")}`);
+      }
+    }
+    console.log("");
+    console.log(dim("  None of the above says an issue is open or closed. It says what the history claims."));
+    console.log("");
+  }
   if (uncheckedUrls.length > 0) {
-    console.log(dim(`  ${uncheckedUrls.length} referenced issue(s) not checked (rate limit / network). Set GITHUB_TOKEN to check all.`));
+    console.log(dim(`  ${uncheckedUrls.length} referenced issue(s) not checked (rate limit / network).`));
+    console.log(dim(`  Set GITHUB_TOKEN to check all${probed.length > 0 ? "" : ", or --probe-upstream to ask git instead"}.`));
   }
   if (skippedGenerated > 0) {
     const shown = generatedDirs.slice(0, 3).join(", ");
@@ -1412,4 +1530,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { reasonResolved, addressOf, expiryDate, scan, gitDateLine };
+module.exports = { reasonResolved, addressOf, expiryDate, scan, gitDateLine, readProbe, upstreamProber, cmpVer, rangeFloor };

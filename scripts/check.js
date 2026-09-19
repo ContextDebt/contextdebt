@@ -19,7 +19,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const root = path.join(__dirname, "..");
-const { reasonResolved, addressOf, scan } = require(path.join(root, "bin", "cli.js"));
+const { reasonResolved, addressOf, scan, readProbe, cmpVer } = require(path.join(root, "bin", "cli.js"));
 
 // closed !== fixed. Each row is [label, reference as fetchIssue resolves it, expected].
 const RESOLUTION_TABLE = [
@@ -29,6 +29,31 @@ const RESOLUTION_TABLE = [
   ["pull request merged", { state: "closed", is_pr: true, merged_at: "2026-02-11T09:00:00Z" }, true],
   ["pull request closed unmerged", { state: "closed", is_pr: true, merged_at: null }, false],
   ["reference never resolved", null, false],
+];
+
+// The git-only probe produces evidence and must never produce a verdict. Each row is
+// [label, git answers, expected probe kind]. No network: this pins the boundary itself.
+const PROBE_TABLE = [
+  ["a commit claims it, and a release contains it",
+    { cloned: true, commit: { sha: "abc1234567", date: "2025-03-14" }, tag: "v1.1.1" }, "fix_claimed_in"],
+  ["a commit claims it, no release yet",
+    { cloned: true, commit: { sha: "abc1234567", date: "2025-03-14" }, tag: null }, "fix_claimed_in"],
+  ["nothing in the history claims it",
+    { cloned: true, commit: null, tag: null, prRef: false }, "no_commit_references_issue"],
+  ["nothing claims it, but a PR ref exists",
+    { cloned: true, commit: null, tag: null, prRef: true }, "no_commit_references_issue"],
+  ["upstream could not be cloned", { cloned: false }, "upstream_unreachable"],
+];
+
+// Versions, including the prerelease rule that made nuxt read as expired on 14 Sep.
+// Each row is [a, b, expected sign of cmpVer(a, b)].
+const VERSION_TABLE = [
+  ["5.1 padded equals 5.1.0", "5.1", "5.1.0", 0],
+  ["a prerelease is below its release", "5.0.0-0", "5.0.0", -1],
+  ["a release is above its prerelease", "5.0.0", "5.0.0-0", 1],
+  ["two prereleases order by their tail", "5.0.0-1", "5.0.0-2", -1],
+  ["plain ordering still holds", "6.4.0", "7.3.3", -1],
+  ["equal is equal", "22.4.1", "22.4.1", 0],
 ];
 
 // An address is what someone can come back for. Each row is [label, line, expected kind].
@@ -53,6 +78,21 @@ const tableProblems = [];
 for (const [label, ref, want] of RESOLUTION_TABLE) {
   const got = reasonResolved(ref);
   if (got !== want) tableProblems.push(`  reasonResolved  ${label}  — expected ${want}, got ${got}`);
+}
+for (const [label, answers, want] of PROBE_TABLE) {
+  const got = readProbe(answers).probe;
+  if (got !== want) tableProblems.push(`  readProbe       ${label}  — expected ${want}, got ${got}`);
+}
+// the boundary itself: a probe may never carry an open/closed state
+for (const [label, answers] of PROBE_TABLE) {
+  const r = readProbe(answers);
+  if ("state" in r || r.probe === "open" || r.probe === "closed") {
+    tableProblems.push(`  readProbe       ${label}  — a probe must never carry a verdict`);
+  }
+}
+for (const [label, a, b, want] of VERSION_TABLE) {
+  const got = cmpVer(a, b);
+  if (got !== want) tableProblems.push(`  cmpVer          ${label}  — expected ${want}, got ${got}`);
 }
 for (const [label, line, want] of ADDRESS_TABLE) {
   const got = addressOf(line, line);
@@ -196,7 +236,8 @@ if (problems.length) {
   process.exit(1);
 }
 console.log(
-  `fixture check passed — ${RESOLUTION_TABLE.length} resolution rows, ${ADDRESS_TABLE.length} address rows, ` +
+  `fixture check passed — ${RESOLUTION_TABLE.length} resolution rows, ${PROBE_TABLE.length} probe rows, ` +
+  `${VERSION_TABLE.length} version rows, ${ADDRESS_TABLE.length} address rows, ` +
   `${Object.keys(expected).length} lines, ${investigable} with an address, ` +
   `${report.dated_unresolved} unresolved without history / ${Object.keys(spec.expected_with_resolver).length} resolved with it, ` +
   `${Object.keys(spec.expected_floor).length} floor verdicts, ${Object.keys(spec.expected_own_version).length} release targets, ` +
