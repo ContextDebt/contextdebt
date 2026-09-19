@@ -637,22 +637,7 @@ function scan(root, opts = {}) {
         const rel = path.relative(root, p);
         const date = expiryDate(lines, i, { file: rel, dateLine });
         // a "fixed in <pkg> <version>" claim the repository can settle by itself
-        let floor = null;
-        const claim = versionClaim(lines[i]);
-        if (claim) {
-          const found = manifestFloor(root, rel, claim.pkg, floorCache);
-          const lock = lockfileVersion(root, claim.pkg, lockCache);
-          floor = {
-            kind: "version_floor", pkg: claim.pkg, fixed_in: claim.fixed_in,
-            floor: found ? found.floor : null,
-            source: found ? found.source : null,
-            declared: found ? found.range : null,
-            manifest: found ? found.manifest : null,
-            status: !found ? "unresolved" : found.floor === null ? "unresolved"
-              : cmpVer(found.floor, claim.fixed_in) >= 0 ? "expired" : "watching"
-          };
-          if (lock) floor.lockfile_version = lock;
-        }
+        const floor = floorFor(root, rel, versionClaims(lines[i]), floorCache, lockCache);
         // a release the note names, judged against the version this project calls itself
         let own = null;
         const target = ownVersionTarget(lines[i]);
@@ -697,23 +682,10 @@ function scan(root, opts = {}) {
         for (let k = n.span.from - 1; k < n.span.to && !date; k++) {
           date = expiryDate(lines, k, { file: rel0, dateLine });
         }
-        let floor = null, own = null;
+        // the whole reason block is one comment, so its claims are pooled before choosing
+        const floor = floorFor(root, rel0, reason.flatMap(versionClaims), floorCache, lockCache);
+        let own = null;
         for (const rl of reason) {
-          if (!floor) {
-            const claim = versionClaim(rl);
-            if (claim) {
-              const found = manifestFloor(root, rel0, claim.pkg, floorCache);
-              const lock = lockfileVersion(root, claim.pkg, lockCache);
-              floor = {
-                kind: "version_floor", pkg: claim.pkg, fixed_in: claim.fixed_in,
-                floor: found ? found.floor : null, source: found ? found.source : null,
-                declared: found ? found.range : null, manifest: found ? found.manifest : null,
-                status: !found || found.floor === null ? "unresolved"
-                  : cmpVer(found.floor, claim.fixed_in) >= 0 ? "expired" : "watching"
-              };
-              if (lock) floor.lockfile_version = lock;
-            }
-          }
           if (!own) {
             const t = ownVersionTarget(rl);
             if (t) {
@@ -876,12 +848,22 @@ function vendoredProvenance(lang, lines, file) {
 const FIXED_IN = /\b(?:(?:fixed|resolved|landed|shipped|released|available)\s+in|since)\s+(@[\w.-]+\/[\w.-]+|[a-z][\w.-]*)[\s@]+v?(\d+(?:\.\d+){0,2})\b/i;
 const MANIFEST_FIELDS = ["peerDependencies", "dependencies", "devDependencies"];
 
-const verParts = (v) => { const p = String(v).split(".").map(Number); while (p.length < 3) p.push(0); return p; };
-// partial versions are padded, so "5.1" and "5.1.0" are the same floor
+// Partial versions are padded, so "5.1" and "5.1.0" are the same floor. A prerelease is
+// LOWER than the release it precedes: "5.0.0-0" is not 5.0.0, and reading it as equal is
+// what made nuxt report an expired reason on 14 Sep. Settled here once, so the own-version
+// oracle and the dependency floor can never disagree about it again.
+function verParse(v) {
+  const m = /^\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?/.exec(String(v));
+  return m ? { nums: [+m[1], +(m[2] || 0), +(m[3] || 0)], pre: m[4] || null } : null;
+}
 function cmpVer(a, b) {
-  const x = verParts(a), y = verParts(b);
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
-  return 0;
+  const x = verParse(a), y = verParse(b);
+  if (!x || !y) return 0;
+  for (let i = 0; i < 3; i++) if (x.nums[i] !== y.nums[i]) return x.nums[i] < y.nums[i] ? -1 : 1;
+  if (x.pre === y.pre) return 0;
+  if (x.pre === null) return 1;
+  if (y.pre === null) return -1;
+  return x.pre < y.pre ? -1 : 1;
 }
 
 // The lowest version any alternative of a range admits. "^6.4.0 || ^7.0.0" is 6.4.0,
@@ -897,7 +879,9 @@ function rangeFloor(range) {
   for (const alt of r.split("||")) {
     const a = alt.trim();
     if (a.startsWith("<")) return null; // an upper bound says nothing about the floor
-    const m = a.match(/(\d+(?:\.\d+){0,2})/);
+    // the prerelease is part of the floor: "^5.0.0-0" admits 5.0.0-0, which is BELOW
+    // 5.0.0. Dropping it here is what made nuxt read as expired on 14 Sep.
+    const m = a.match(/(\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z.-]+)?)/);
     if (!m) return null;
     if (lowest === null || cmpVer(m[1], lowest) < 0) lowest = m[1];
   }
@@ -956,10 +940,55 @@ function lockfileVersion(root, pkg, cache) {
   return found;
 }
 
+// The same condition, written the way people actually write it: "Vite 7.3.3+ applies this
+// automatically", "vite >= 7.3.3". This is the shape of the best note found in 1.34M lines,
+// and it is the same question the "fixed in" shape asks — only the grammar differs.
+const FLOOR_PLUS = /\b(@[\w.-]+\/[\w.-]+|[A-Za-z][\w.-]*)\s+v?(\d+(?:\.\d+){1,2})\+/;
+const FLOOR_GTE = /\b(@[\w.-]+\/[\w.-]+|[A-Za-z][\w.-]*)\s*>=\s*v?(\d+(?:\.\d+){0,2})\b/;
+
+// Every version claim on a line. A comment can carry more than one — novu's names both
+// esbuild and vite — so the caller picks, rather than the first match winning by accident.
+function versionClaims(line) {
+  const bare = stripQuoted(line);
+  const out = [];
+  for (const re of [FIXED_IN, FLOOR_PLUS, FLOOR_GTE]) {
+    const m = re.exec(bare);
+    if (m) out.push({ pkg: m[1].toLowerCase(), named: m[1], fixed_in: m[2] });
+  }
+  return out;
+}
+
 // The version claim on a marker line, if it makes one.
 function versionClaim(line) {
-  const m = FIXED_IN.exec(stripQuoted(line));
-  return m ? { pkg: m[1], fixed_in: m[2] } : null;
+  const c = versionClaims(line);
+  return c.length ? c[0] : null;
+}
+
+// A floor verdict from a set of claims. When a comment names more than one package, the
+// one this project actually depends on is the one its floor can be read against — novu's
+// note names esbuild and vite, and only vite is in the manifest. A claim about a package
+// nothing here declares cannot be a floor for this project, so it is the fallback, and it
+// resolves to unresolved rather than to a guess.
+function floorFor(root, file, claims, floorCache, lockCache) {
+  if (!claims.length) return null;
+  let chosen = null, found = null;
+  for (const c of claims) {
+    const hit = manifestFloor(root, file, c.pkg, floorCache);
+    if (hit && hit.floor !== null) { chosen = c; found = hit; break; }
+  }
+  if (!chosen) { chosen = claims[0]; found = manifestFloor(root, file, chosen.pkg, floorCache); }
+  const lock = lockfileVersion(root, chosen.pkg, lockCache);
+  const out = {
+    kind: "version_floor", pkg: chosen.named, fixed_in: chosen.fixed_in,
+    floor: found ? found.floor : null,
+    source: found ? found.source : null,
+    declared: found ? found.range : null,
+    manifest: found ? found.manifest : null,
+    status: !found || found.floor === null ? "unresolved"
+      : cmpVer(found.floor, chosen.fixed_in) >= 0 ? "expired" : "watching"
+  };
+  if (lock) out.lockfile_version = lock;
+  return out;
 }
 
 // ---------- tier 4: the project's own version ----------

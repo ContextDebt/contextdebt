@@ -74,7 +74,10 @@
     "E_active_voice/shapes.ts:11": null,
     "E_active_voice/shapes.ts:13": null,
     "E_active_voice/shapes.ts:15": null,
-    "A_named_identifier/vite.config.ts:7": null
+    "A_named_identifier/vite.config.ts:7": null,
+    "H_prose_floor/src/notes.ts:1": null,
+    "H_prose_floor/src/notes.ts:3": null,
+    "H_prose_floor/src/notes.ts:5": null
   },
   "addresses": {
     "address_refs.py:6": "self",
@@ -150,7 +153,10 @@
     "E_active_voice/shapes.ts:11": null,
     "E_active_voice/shapes.ts:13": null,
     "E_active_voice/shapes.ts:15": null,
-    "A_named_identifier/vite.config.ts:7": "url"
+    "A_named_identifier/vite.config.ts:7": "url",
+    "H_prose_floor/src/notes.ts:1": null,
+    "H_prose_floor/src/notes.ts:3": null,
+    "H_prose_floor/src/notes.ts:5": null
   },
   "dated_unresolved_without_resolver": 1,
   "fake_history": {
@@ -166,7 +172,11 @@
     "floor_project/src/logger.js:3": "expired",
     "floor_project/src/scoped.js:1": "expired",
     "floor_project/src/unknown.js:1": "unresolved",
-    "floor_watching/src/logger.js:1": "watching"
+    "floor_watching/src/logger.js:1": "watching",
+    "H_prose_floor/src/notes.ts:1": "watching",
+    "H_prose_floor/src/notes.ts:3": "watching",
+    "H_prose_floor/src/notes.ts:5": "watching",
+    "A_named_identifier/vite.config.ts:7": "watching"
   },
   "expected_own_version": {
     "js_markers.js:21": "unresolved",

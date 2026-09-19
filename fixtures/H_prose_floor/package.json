@@ -1,0 +1,5 @@
+{
+  "name": "prose-floor-fixture",
+  "version": "1.0.0",
+  "dependencies": { "nuxt": "^5.0.0-0", "rollup": "^4.9.0" }
+}
