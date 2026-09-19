@@ -77,7 +77,9 @@
     "A_named_identifier/vite.config.ts:7": null,
     "H_prose_floor/src/notes.ts:1": null,
     "H_prose_floor/src/notes.ts:3": null,
-    "H_prose_floor/src/notes.ts:5": null
+    "H_prose_floor/src/notes.ts:5": null,
+    "E_active_voice/shapes.ts:19": null,
+    "E_active_voice/shapes.ts:21": null
   },
   "addresses": {
     "address_refs.py:6": "self",
@@ -156,7 +158,9 @@
     "A_named_identifier/vite.config.ts:7": "url",
     "H_prose_floor/src/notes.ts:1": null,
     "H_prose_floor/src/notes.ts:3": null,
-    "H_prose_floor/src/notes.ts:5": null
+    "H_prose_floor/src/notes.ts:5": null,
+    "E_active_voice/shapes.ts:19": null,
+    "E_active_voice/shapes.ts:21": null
   },
   "dated_unresolved_without_resolver": 1,
   "fake_history": {

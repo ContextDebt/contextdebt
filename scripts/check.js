@@ -139,8 +139,8 @@ if (investigable + unaddressed !== report.markers) {
 }
 // a generated file is skipped whole, and a deprecation notice is counted apart from a
 // workaround: both are claims about what we did NOT report, so both are pinned
-if (report.skipped_generated !== spec.skipped_generated) {
-  problems.push(`  generated   expected ${spec.skipped_generated} generated file(s) skipped, got ${report.skipped_generated}`);
+if (report.skipped_generated_files !== spec.skipped_generated) {
+  problems.push(`  generated   expected ${spec.skipped_generated} generated file(s) skipped, got ${report.skipped_generated_files}`);
 }
 if (report.deprecation_notices !== spec.deprecation_notices) {
   problems.push(`  deprecated  expected ${spec.deprecation_notices} deprecation notice(s), got ${report.deprecation_notices}`);
@@ -241,5 +241,5 @@ console.log(
   `${Object.keys(expected).length} lines, ${investigable} with an address, ` +
   `${report.dated_unresolved} unresolved without history / ${Object.keys(spec.expected_with_resolver).length} resolved with it, ` +
   `${Object.keys(spec.expected_floor).length} floor verdicts, ${Object.keys(spec.expected_own_version).length} release targets, ` +
-  `${report.deprecation_notices} deprecations, ${report.skipped_generated} generated skipped`
+  `${report.deprecation_notices} deprecations, ${report.skipped_generated_files} generated file(s) skipped`
 );

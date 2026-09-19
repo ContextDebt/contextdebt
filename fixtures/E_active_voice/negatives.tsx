@@ -10,3 +10,5 @@ export function MemberRow({ name, onRemove }: { name: string; onRemove: () => vo
 }
 // Remove this line not to show stack trace
 export const quiet = true;
+/** Delete this message from the platform. Removes the rendered message only. */
+export const doc = true;

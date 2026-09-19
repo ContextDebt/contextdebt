@@ -49,6 +49,12 @@ const MARKER_REMOVAL = new RegExp(
     // So it needs a tag in front of it or a condition behind it — nothing else counts.
     "\\b(?:TODO|FIXME|HACK|XXX)\\b[^.;]{0,24}?(?:remove|delete)\\s+this\\b",
     "(?:remove|delete)\\s+this\\b[^.;]{0,40}?\\b(?:when|once|after|if|unless|until)\\b",
+    // A stated intention counts as a condition: "Later we will remove this attribute" and
+    // "we will remove this in the future" are promises, and dropping them cost novu five
+    // real markers when the guard above first landed. "Remove this line not to show stack
+    // trace" still has no tag, no condition and no intention, and stays out.
+    "\\b(?:we\\s+(?:will|shall|should|must|can)|later|eventually|soon)\\b[^.;]{0,24}?(?:remove|delete)\\s+this\\b",
+    "(?:remove|delete)\\s+this\\b[^.;]{0,40}?\\bin\\s+the\\s+future\\b",
     // 0.1.13, the active voice: a tag plus a bare "remove". This is the shape that made
     // drizzle-orm report 0 markers across 270k lines while grep found 17 of them —
     // "// TODO: remove", "// TODO: remove?", "// TODO: Seems not used. Remove."
@@ -1332,7 +1338,7 @@ async function main() {
       expired_by_own_date: datedExpired.length, dated_upcoming: datedUpcoming.length,
       dated_unresolved: datedUnresolved.length,
       trac_tickets_referenced: tracRefs.length, skipped_dirs: skipped,
-      skipped_generated: skippedGenerated, generated_dirs: generatedDirs,
+      skipped_generated_files: skippedGenerated, generated_dirs: generatedDirs,
       notes: { investigable: investigable.length, unaddressed: unaddressed.length },
       findings, issues: resolved }, null, 2));
     return;

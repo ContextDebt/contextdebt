@@ -16,3 +16,7 @@ export const g = 7;
 export const h = 8;
 // TODO: remove after 1.5
 export const i = 9;
+// Later we will remove this attribute
+export const j = 10;
+// we will remove this in the future
+export const k = 11;
