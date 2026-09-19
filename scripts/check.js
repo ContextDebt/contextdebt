@@ -115,6 +115,17 @@ for (const key of Object.keys(actual)) {
   if (!(key in expected)) problems.push(`  unwanted  ${key}  — reported, but not listed in expected.json`);
 }
 
+// addressed and resolvable are two claims, and 0.1.13 separates them: a Linear or Jira
+// key is an address a human comes back for that no oracle of ours can ask about. The rule
+// is checked rather than pinned per line, so a new address kind has to declare which it is.
+const RESOLVABLE = new Set(["url", "repo", "self"]);
+for (const f of report.findings) {
+  const want = f.address === null ? null : RESOLVABLE.has(f.address);
+  if (f.verifiable !== want) {
+    problems.push(`  verifiable ${f.file}:${f.line}  — address ${f.address} should be verifiable=${want}, got ${f.verifiable}`);
+  }
+}
+
 // a floor verdict is the one thing in this release that needs no network at all, so it
 // is pinned per line: expired, watching, or unresolved — never a silent absence
 const actualFloor = {};

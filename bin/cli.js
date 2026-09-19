@@ -350,6 +350,17 @@ function stripQuoted(line) {
 const ADDRESS_URL = /github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+/i;
 const ADDRESS_REPO = /\b[\w.-]+\/[\w.-]+#\d{1,6}\b/;
 const ADDRESS_SELF = /\b(?:issue|issues|bug|ticket|pr|gh)\s*#\s*\d{1,6}\b/i;
+// Most organisations that pay for software do not track work in GitHub issues. novu
+// leaves 14 marker lines pointing at Linear; under the GitHub-only rules every one of
+// them counted as unaddressed, which says the authors left nothing to come back to when
+// in fact they left an address we could not read.
+const ADDRESS_LINEAR = /\blinear\.app\/[\w.-]+\/issue\/([A-Za-z]{2,6}-\d{1,6})/i;
+const ADDRESS_JIRA = /\b[\w.-]+\.atlassian\.net\/browse\/([A-Za-z]{2,6}-\d{1,6})/i;
+// A bare ticket key, uppercase only. Lowercase in prose is far too common to risk, and
+// the standards below are not tickets — "workaround for UTF-16 handling" must not read
+// as an address just because it has the shape of one.
+const NOT_A_TICKET = /^(?:UTF|ISO|SHA|RFC|AES|RSA|MD|CVE|HTTP|HTML|CSS|ES|ECMA|IEEE|ANSI|PEP|JSR|UCS|ARM|IPV|SSE|AVX|X)$/;
+const ADDRESS_TRACKER_KEY = /\b([A-Z]{2,6})-(\d{2,6})\b/;
 const ADDRESS_DATE = new RegExp(
   [
     "\\b20\\d{2}-\\d{2}(?:-\\d{2})?\\b",
@@ -371,12 +382,27 @@ const ADDRESS_DATE = new RegExp(
 // from the marker's own line only: on a neighbour it may well belong to a different
 // comment, and inheriting it would invent an address that nobody wrote here.
 function addressOf(line, ctx) {
-  if (ADDRESS_URL.test(ctx === undefined ? line : ctx)) return "url";
+  const wide = ctx === undefined ? line : ctx;
+  // Only a GitHub URL keeps the wider window: parking the link on the line under the
+  // marker is the published convention there. Everything else is read from the marker's
+  // own line, the 0.1.10 rule — a Linear URL two lines away may belong to a different
+  // comment, and borrowing it would put someone else's ticket number on this note.
+  if (ADDRESS_URL.test(wide)) return "url";
+  if (ADDRESS_LINEAR.test(line)) return "linear";
+  if (ADDRESS_JIRA.test(line)) return "jira";
   if (ADDRESS_REPO.test(line)) return "repo";
   if (ADDRESS_SELF.test(line)) return "self";
+  const key = ADDRESS_TRACKER_KEY.exec(line);
+  if (key && !NOT_A_TICKET.test(key[1])) return "tracker_key";
   if (ADDRESS_DATE.test(line)) return "date";
   return null;
 }
+
+// Whether the oracle can ever ask about this address. A Linear or Jira key is an address
+// a human comes back for; nothing we run can resolve it, and nothing may open an issue
+// off it. Saying so is the point: addressed and resolvable are different claims.
+const VERIFIABLE = new Set(["url", "repo", "self"]);
+function addressVerifiable(kind) { return kind === null ? null : VERIFIABLE.has(kind); }
 
 // Index of the first trustworthy marker match on a line, or -1.
 function markerIndex(line, spans) {
@@ -598,6 +624,7 @@ function scan(root, opts = {}) {
         // same window as the issue lookup — a comment is the block, not one line —
         // but with quoted examples blanked out first
         const addrCtx = lines.slice(Math.max(0, i - 2), i + 2).map(stripQuoted).join("\n");
+        const addrKind = addressOf(stripQuoted(lines[i]), addrCtx);
         const rel = path.relative(root, p);
         const date = expiryDate(lines, i, { file: rel, dateLine });
         // a "fixed in <pkg> <version>" claim the repository can settle by itself
@@ -642,7 +669,7 @@ function scan(root, opts = {}) {
           file: rel, line: i + 1,
           text: lines[i].trim().slice(0, 160), issues, trac,
           dated: date && date.kind === "dated" ? date.parsed : null, date, floor, own,
-          address: addressOf(stripQuoted(lines[i]), addrCtx)
+          address: addrKind, verifiable: addressVerifiable(addrKind)
         });
       }
       // Named workarounds, after the word-based pass, so a reason block that already
@@ -698,6 +725,7 @@ function scan(root, opts = {}) {
           }
         }
         const bare = reason.map(stripQuoted).join("\n");
+        const namedAddr = addressOf(bare, bare);
         const issues = [...reasonText.matchAll(ISSUE_URL)].map((m) => ({
           url: m[0], owner: m[1], repo: m[2], num: m[4]
         }));
@@ -707,7 +735,7 @@ function scan(root, opts = {}) {
           named: n.name, reason_span: n.span,
           issues, trac: [...reasonText.matchAll(TRAC_URL)].map((m) => m[0]),
           dated: date && date.kind === "dated" ? date.parsed : null, date, floor, own,
-          address: addressOf(bare, bare)
+          address: namedAddr, verifiable: addressVerifiable(namedAddr)
         });
       }
     }
