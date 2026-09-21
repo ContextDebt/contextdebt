@@ -8,6 +8,8 @@
 npx contextdebt
 ```
 
+We ran it on 1,813 of the most-starred repos on GitHub — results and every claim, re-checkable: [contextdebt.dev/report](https://contextdebt.dev/report)
+
 Run it inside any JS/TS, WordPress/PHP, or Python repository. In seconds you get:
 
 - every **self-admitted workaround** in your comments (`workaround`, `until we upgrade`, `TODO: remove when ...`, `TODO(v11): remove`, `Remove in v18.`, `we can use X once we drop Y`) — comments only, so an identifier like `var kludge = 0` or a UI string never counts
