@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.14 — 2026-11-01
+
+**An MCP server.** `npx contextdebt mcp` runs the same scanner over stdio for Claude Code, Cursor, Windsurf, Claude Desktop, or any MCP client. Two tools:
+
+- `scan_workarounds` — every self-admitted workaround in a directory, the ones whose stated reason expired listed first, each with its evidence (the cited reference resolved, the fix at or below the project's own floor, a release already shipped, a date passed). It runs the CLI's own `--json` scan, so the counts are the CLI's counts.
+- `check_reason` — one GitHub issue or PR reference: resolved, closed without a fix, or open. Closed is not fixed, the same rule as the scan.
+
+No new dependency. Nothing but protocol messages is written to stdout. Every result carries the same instruction the README does: an expired reason is evidence, never "safe to delete".
+
 ## 0.1.13 — 2026-09-19
 
 Precision first. On 1,340,156 lines the scanner produced exactly two `expired` verdicts and **both were wrong**, and on 270,525 lines of drizzle-orm it reported zero markers where a plain grep finds seventeen. This release is those two facts, fixed.

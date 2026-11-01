@@ -15,7 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const https = require("node:https");
 
-const VERSION = "0.1.13";
+const VERSION = "0.1.14";
 const LANG = new Map([
   [".js", "js"], [".jsx", "js"], [".ts", "js"], [".tsx", "js"], [".mjs", "js"], [".cjs", "js"],
   [".mts", "js"], [".cts", "js"],
@@ -1200,12 +1200,14 @@ function upstreamProber(enabled) {
 // ---------- main ----------
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === "mcp") { require("./mcp.js").run(); return; }
   if (args.includes("--version") || args.includes("-v")) { console.log(VERSION); return; }
   if (args.includes("--help") || args.includes("-h")) {
     console.log(`
   ${bold("contextdebt")} v${VERSION} — find the expired code your AI reads every day
 
   Usage: npx contextdebt [path] [--json] [--all] [--probe-upstream]
+         npx contextdebt mcp     run as an MCP server (stdio) for Claude Code, Cursor, ...
 
   Scans JS/TS/PHP/Python source for self-admitted workarounds ("workaround",
   "until we upgrade", "TODO: remove when ...") and checks whether
@@ -1536,4 +1538,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { reasonResolved, addressOf, expiryDate, scan, gitDateLine, readProbe, upstreamProber, cmpVer, rangeFloor };
+module.exports = { VERSION, reasonResolved, closedWithoutFix, fetchIssue, addressOf, expiryDate, scan, gitDateLine, readProbe, upstreamProber, cmpVer, rangeFloor };

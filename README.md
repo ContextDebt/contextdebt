@@ -8,6 +8,20 @@
 npx contextdebt
 ```
 
+### Inside Claude Code, Cursor, or any MCP client
+
+```bash
+claude mcp add contextdebt -- npx -y contextdebt mcp
+```
+
+Cursor, Windsurf, Claude Desktop — add this to the client's MCP config:
+
+```json
+{ "mcpServers": { "contextdebt": { "command": "npx", "args": ["-y", "contextdebt", "mcp"] } } }
+```
+
+Then ask your agent: *"use contextdebt — which workarounds in this repo have expired reasons?"* It gets two tools: `scan_workarounds` (the scan below, expired reasons first, with evidence) and `check_reason` (one cited issue or PR: resolved, closed without a fix, or open). Same rules as the CLI: runs locally, and it never says "safe to delete".
+
 We ran it on 1,813 of the most-starred repos on GitHub — results and every claim, re-checkable: [contextdebt.dev/report](https://contextdebt.dev/report)
 
 Run it inside any JS/TS, WordPress/PHP, or Python repository. In seconds you get:
@@ -34,7 +48,7 @@ Run it inside any JS/TS, WordPress/PHP, or Python repository. In seconds you get
 
 **Runs 100% locally. Your code never leaves your machine.** The only network calls are GitHub API status lookups for issue URLs your own comments reference — and the checks above that read your own dates, manifests and version make none at all. Set `GITHUB_TOKEN` to raise the lookup rate limit.
 
-Options: `npx contextdebt [path] [--all] [--json]`
+Options: `npx contextdebt [path] [--all] [--json]` · `npx contextdebt mcp` runs the MCP server
 
 ## What this is (and isn't)
 

@@ -1,7 +1,7 @@
 {
   "name": "contextdebt",
-  "version": "0.1.13",
-  "description": "Find the expired code your AI reads \u2014 and you pay for \u2014 every day. Scans your repo for self-admitted workarounds and checks whether the reasons they cite are already dead.",
+  "version": "0.1.14",
+  "description": "Find the expired code your AI reads — and you pay for — every day. Scans your repo for self-admitted workarounds and checks whether the reasons they cite are already dead.",
   "scripts": {
     "test": "node scripts/check.js"
   },
@@ -20,7 +20,11 @@
     "ai",
     "llm",
     "codebase",
-    "cleanup"
+    "cleanup",
+    "mcp",
+    "mcp-server",
+    "claude-code",
+    "cursor"
   ],
   "homepage": "https://contextdebt.dev",
   "repository": {
