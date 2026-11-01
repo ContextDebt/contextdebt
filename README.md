@@ -1,5 +1,7 @@
 # ContextDebt
 
+English · [简体中文](i18n/README.zh-CN.md) · [日本語](i18n/README.ja.md) · [Español](i18n/README.es.md) · [한국어](i18n/README.ko.md)
+
 **Context debt** is the expired code your AI reads — and you pay for — every day: workarounds for bugs fixed upstream years ago, polyfills for browsers you no longer support, retry logic tuned for defaults that no longer exist. The reason died; the code stayed.
 
 ## Try it now
