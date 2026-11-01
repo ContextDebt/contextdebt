@@ -52,6 +52,16 @@ Run it inside any JS/TS, WordPress/PHP, or Python repository. In seconds you get
 
 Options: `npx contextdebt [path] [--all] [--json]` · `npx contextdebt mcp` runs the MCP server
 
+## Badge
+
+Installed the [GitHub App](https://github.com/apps/contextdebt) on a public repository? Show what it watches:
+
+```markdown
+![context debt](https://img.shields.io/endpoint?url=https://app.contextdebt.dev/badge/OWNER/REPO)
+```
+
+It reads `N watched · 0 expired`, or how many notes have an expired reason. Private repositories always read "not watched".
+
 ## What this is (and isn't)
 
 This free scanner finds *candidates* — code whose stated reason may have expired. It deliberately says "expired reason", never "safe to delete": that the reason died is one claim, that removing the code is safe is another, and only the first is provable from a comment and a manifest. The second needs your tests and your judgement, and stays yours.
